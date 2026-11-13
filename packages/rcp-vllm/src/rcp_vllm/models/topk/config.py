@@ -20,9 +20,11 @@ harmless: registration wins under either flag value).
 
 The class below restates ``modeling_topk_embed.py:12-29`` at the pinned
 revision e54485ebab921f2c18c4d092b3f4c40dcca26781, line for line; every field
-and default is the remote code's.  ``modeling_topk_embed.py`` itself is never
-imported at serve time (vLLM resolves the model class from its own registry),
-so this is the only config surface the engine consumes.
+and default is the remote code's.  The one exception is the remote file's
+``sub_configs`` restatement, which this class inherits instead (the comment on
+the class says why).  ``modeling_topk_embed.py`` itself is never imported at
+serve time (vLLM resolves the model class from its own registry), so this is
+the only config surface the engine consumes.
 """
 
 from __future__ import annotations
@@ -40,17 +42,24 @@ class TopkEmbedConfig(Qwen3_5Config):
     """``topk_embed``: a Qwen3.5 multimodal config plus the retriever knobs.
 
     A faithful restatement of the checkpoint's remote ``TopkEmbedConfig``
-    (modeling_topk_embed.py:12-29): ``model_type`` and ``sub_configs`` so
-    ``text_config`` / ``vision_config`` parse through transformers' own
-    Qwen3.5 machinery, and the retrieval knobs the checkpoint adds at the top
-    level.  vLLM consumes only ``dim`` (the projection output size, via
-    ColQwen3_5Model) and the sub-configs; the remaining knobs are parsed so
-    the config object is faithful for inspection (the prompts, the skip ids
-    and the caps are recipe/client concerns, not engine ones).
+    (modeling_topk_embed.py:12-29): ``model_type`` (with the ``sub_configs``
+    inherited from ``Qwen3_5Config``) so ``text_config`` / ``vision_config``
+    parse through transformers' own Qwen3.5 machinery, and the retrieval knobs
+    the checkpoint adds at the top level.  vLLM consumes only ``dim`` (the
+    projection output size, via ColQwen3_5Model) and the sub-configs; the
+    remaining knobs are parsed so the config object is faithful for inspection
+    (the prompts, the skip ids and the caps are recipe/client concerns, not
+    engine ones).
     """
 
     model_type = MODEL_TYPE
-    sub_configs = Qwen3_5Config.sub_configs
+    # ``sub_configs`` is deliberately not restated here. transformers 5.20 replaced the
+    # ``sub_configs`` ClassVar with a ``classproperty`` derived from the new
+    # ``sub_configs_defaults`` (``PreTrainedConfig.sub_configs``), so a class-scope dict shadows
+    # that descriptor; and the restatement was always redundant -- ``Qwen3_5Config`` declares the
+    # mapping in every supported transformers (the ClassVar through 5.19, ``sub_configs_defaults``
+    # from 5.20) and this class inherits it, so the sub-config machinery sees the same mapping
+    # either way.
     dim: int = 1024
     output_dim: int | None = None
     normalize: bool = True
