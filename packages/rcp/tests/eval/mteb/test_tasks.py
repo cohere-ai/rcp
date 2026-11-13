@@ -15,9 +15,12 @@ from rcp.eval.mteb import get_tasks, ndcg_float_scores, task_metadata, task_subs
 LOG2_3 = math.log2(3)
 
 # The published files that key their task table by task name (the 2026-10 rename): the table's keys are the
-# published task names and `_SUBSETS` maps the subset aliases to them.
+# published task names and `_SUBSETS` maps the subset aliases to them. `_REVISION` pins a commit, as every
+# published file's release does: `get_tasks` resolves a revision that is not one, and a fake tag would send
+# that resolution to the Hub.
+_FAKE_COMMIT = "a" * 40
 _NEW_FORMAT_FILE = (
-    '_REVISION = "abc123"\n'
+    f'_REVISION = "{_FAKE_COMMIT}"\n'
     '_TASK_METADATA = json.loads(r"""{'
     '"BrightAopsRCPReranking": {'
     '"name": "BrightAopsRCPReranking", "type": "Reranking", '
@@ -68,6 +71,17 @@ def test_task_metadata_wraps_a_malformed_table_as_a_data_error() -> None:
     with pytest.raises(DataError, match="_TASK_METADATA is not valid JSON") as caught:
         task_metadata('_REVISION = "abc123"\n_TASK_METADATA = json.loads(r"""{""")\n')
     assert caught.value.hint or ""
+
+
+def test_task_metadata_reads_the_published_release_tag_as_the_revision() -> None:
+    """The files published from the v2 release on declare their release as a tag (``_REVISION = "v2-..."``),
+    not a commit: the reader takes it as the release revision instead of refusing the file as "not an
+    rcp_ndcg_tasks.py" (the hex-only pattern refused every v2 file, and with it the published-name tasks)."""
+    tag = "v2-nvidia-qwen3.5-397b-a17b-nvfp4"
+    table = '{"aops": {"name": "BrightAopsRCPReranking"}}'
+    source = f'_REVISION = "{tag}"\n_TASK_METADATA = json.loads(r"""{table}""")\n'
+
+    assert task_metadata(source) == (tag, {"aops": {"name": "BrightAopsRCPReranking"}})
 
 
 def test_task_subsets_reads_the_published_alias_map_as_data() -> None:
@@ -138,6 +152,30 @@ def test_the_bright_tasks_carry_the_published_names() -> None:
 
     assert [task.metadata.name for task in by_alias] == ["BrightAopsRCPReranking"]
     assert [task.metadata for task in by_alias] == [task.metadata for task in by_name]
+
+
+def test_get_tasks_pins_the_commit_a_published_release_tag_names(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A task's data is loaded at the revision its metadata carries, so a tag is not a pin: `get_tasks` resolves
+    the revision the file declares (a release tag since the v2 release) to the commit it names, and the task
+    carries that commit rather than the moving tag."""
+    from rcp.data import SUITES
+    from rcp.data.revisions import ResolvedRevision
+
+    pytest.importorskip("mteb")
+    tag = "v2-nvidia-qwen3.5-397b-a17b-nvfp4"
+    source = _NEW_FORMAT_FILE.replace(f'_REVISION = "{_FAKE_COMMIT}"', f'_REVISION = "{tag}"')
+    monkeypatch.setattr(mteb_module, "_hub_text", lambda repo, path, revision=None: source)
+    looked_up: list[tuple[str, str]] = []
+
+    def fake_resolve(repo: str, revision: str | None = None) -> ResolvedRevision:
+        looked_up.append((repo, revision or "main"))
+        return ResolvedRevision(repo, "c" * 40)
+
+    monkeypatch.setattr(mteb_module, "resolve_revision", fake_resolve)
+    task = get_tasks("bright", ["aops"])[0]
+
+    assert looked_up == [(SUITES["bright"].repo, tag)]
+    assert task.metadata.dataset["revision"] == "c" * 40
 
 
 @pytest.mark.network

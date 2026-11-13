@@ -31,6 +31,7 @@ from typing import Any, Literal
 from rcp_core.metric import ndcg
 
 from rcp.data.dataset import SUITES
+from rcp.data.revisions import resolve_revision
 from rcp.errors import CapabilityError, ConfigError, DataError, MissingInputError
 from rcp.eval.mteb.stored import StoredRankings, model_meta, stored_rankings_model
 
@@ -101,7 +102,9 @@ def get_tasks(
         names: Subsets (for ViDoRe v3: domains) or published task names to return; each subset may be
             named either way (the published files ship the alias map ``_SUBSETS``). ``None`` returns all.
         mode: ``"reranking"`` (the recommended view) or ``"retrieval"``.
-        revision: The data revision; ``None`` is the revision the suite's task file was released with.
+        revision: The data revision; ``None`` is the revision the suite's task file was released with. A
+            revision that is not a commit -- the published files declare a release tag since the v2 release --
+            is resolved to the commit it names, so the task's metadata pins the commit its data is read at.
 
     Returns:
         ``mteb`` task objects, ready for ``mteb.evaluate``.
@@ -129,6 +132,12 @@ def get_tasks(
     released, metadata = task_metadata(source)
     aliases = task_subsets(source)
     revision = revision or released
+    # The published files name their release as a tag from the v2 release on (``_REVISION = "v2-..."``), and a
+    # task's data is loaded at the revision its metadata names: resolve the revision to the commit it names (as
+    # every other Hub read does), so the task pins a commit rather than a moving tag. A commit resolves to itself
+    # without a lookup; a revision neither the Hub nor the cache can answer keeps the declared string and
+    # ``resolve_revision`` warns UNPINNED_REVISION.
+    revision = resolve_revision(SUITES[suite].repo, revision).commit or revision
     # Default: the published default view (one task per subset; the files' alias map carries it). A file
     # without the map (the older releases) is keyed by the subset names themselves.
     chosen = list(names) if names else sorted(set(aliases.values()) or set(metadata))
@@ -156,14 +165,16 @@ def get_tasks(
 def task_metadata(source: str) -> tuple[str, dict[str, dict[str, Any]]]:
     """``(released revision, task table)`` from the text of a suite's ``rcp_ndcg_tasks.py``.
 
-    The table is the file's ``_TASK_METADATA`` JSON, keyed as the release keys it: the published task names
-    from the 2026-10 rename on, the subset names before that.
+    The revision is the one the file declares for its release: a commit in the older files, a release tag
+    (``v2-...``) in the files published from the v2 release on. The table is the file's ``_TASK_METADATA``
+    JSON, keyed as the release keys it: the published task names from the 2026-10 rename on, the subset names
+    before that.
 
     Raises:
         DataError: The text is not an ``rcp_ndcg_tasks.py``, or its ``_TASK_METADATA`` is not valid JSON
             (the published file is the input; a caller cannot tell that from its own malformed input).
     """
-    revision = re.search(r'^_REVISION = "([0-9a-f]+)"', source, re.M)
+    revision = re.search(r'^_REVISION = "([^"\n]+)"', source, re.M)
     table = re.search(r'_TASK_METADATA[^=]*= json\.loads\(r"""(.*?)"""\)', source, re.S)
     if revision is None or table is None:
         raise DataError("not an rcp_ndcg_tasks.py: no _REVISION or _TASK_METADATA")
