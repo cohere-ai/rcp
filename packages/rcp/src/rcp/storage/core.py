@@ -5,6 +5,13 @@ Everything routes through fsspec, so ``gs://``, ``s3://``, ``az://``, ``hf://``,
 protocol-specific packages are optional extras; asking for a protocol that is
 not installed raises a message naming the extra to install rather than an
 ``ImportError`` from three frames down.
+
+The two publication seams are :mod:`configkit.storage`'s: :func:`publish` hands the library the staging file and
+an :class:`~configkit.ports.AtomicWriter` (this module's default is :class:`AtomicReplace`, and a caller with a
+stricter swap passes its own), and :func:`publication_lock` is the library's one advisory lock. fsspec stays
+here: it is the consumer's URI layer, and :class:`FsspecUri` is the ``Ports.uri`` implementation the library's
+``read_uri``/``write_uri`` route through (rcp-38 is partial by design -- the library ships the ``file://`` handler
+only).
 """
 
 from __future__ import annotations
@@ -12,13 +19,15 @@ from __future__ import annotations
 import os
 import posixpath
 import shutil
-import stat
-import tempfile
 import threading
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import IO, Any
+
+from configkit.ports import AtomicWriter
+from configkit.storage import lock as _lock
+from configkit.storage import publish as _publish
 
 from rcp.errors import ConfigError, DataError, DependencyError, dependency_error
 from rcp.storage.uri import is_remote, local_path, protocol_of, split_protocol
@@ -241,42 +250,47 @@ def publication_lock(target: str | Path, *, shared: bool = False) -> Iterator[No
     records, leaving a pair that is internally inconsistent (one writer's vectors under another's record);
     the lock serialises them. A *reader* that must hold the payload still while it verifies and reads it
     takes the shared form (``shared=True``): it excludes a writer but not other readers. The lock is taken on
-    a sibling ``<target>.lock`` file, so it is never part of what is published. On a platform without
-    advisory locks the lock is absent: callers publish the payload before its record, so a torn pair is
-    detected (the record describes what the payload must be) rather than served.
+    a sibling ``<target>.lock`` file, so it is never part of what is published. It is
+    :func:`configkit.storage.lock`, so it needs a POSIX host (the library refuses elsewhere rather than
+    pretending); callers publish the payload before its record, so a torn pair is detected (the record
+    describes what the payload must be) rather than served.
 
     Args:
         target: The path being published (a file or a directory).
         shared: Take a shared (reader) lock instead of the exclusive (writer) one.
     """
     lock_path = Path(target).with_name(f"{Path(target).name}.lock")
-    try:
-        import fcntl
-    except ImportError:  # pragma: no cover - non-POSIX
+    with _lock(lock_path, shared=shared):
         yield
-        return
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(lock_path, "a") as handle:
-        fcntl.flock(handle, fcntl.LOCK_SH if shared else fcntl.LOCK_EX)
-        try:
-            yield
-        finally:
-            fcntl.flock(handle, fcntl.LOCK_UN)
 
 
-def publish(target: str | Path, write: Callable[[Path], Any], *, mode: int | None = None) -> None:
+def publish(
+    target: str | Path,
+    write: Callable[[Path], Any],
+    *,
+    mode: int | None = None,
+    atomic: AtomicWriter | None = None,
+) -> None:
     """Materialise *target* atomically: *write* fills a temp file beside it, then one rename puts it in place.
 
     A reader of *target* sees either the previous file or the complete new one, never a half-written one
     -- which is what concurrent readers of a media cache, a rendered page or a downloaded corpus would
     otherwise see. The one home of the discipline: writers elsewhere call this instead of growing their
-    own temp-file copies. The published file keeps the mode a plain write would give it: an existing
-    target's own mode, else ``0666 & ~umask`` (``mkstemp`` creates the temp file 0600, which a shared
-    reader could not open). *mode* is the file's permission bits (masked by the process umask); a run's records
-    pass ``0o600``: what a shared cluster filesystem must not expose.
+    own temp-file copies. The staging file, the mode rule and the swap are
+    :func:`configkit.storage.publish`'s; the swap itself is the caller's :class:`~configkit.ports.AtomicWriter`
+    (:class:`AtomicReplace` unless one is injected). The published file keeps the mode a plain write would give
+    it: an existing target's own mode, else ``0666 & ~umask`` (``mkstemp`` creates the temp file 0600, which a
+    shared reader could not open). *mode* is the file's permission bits (masked by the process umask); a run's
+    records pass ``0o600``: what a shared cluster filesystem must not expose.
 
     Only a local path can publish by rename; a remote target raises, because object stores make each
     object visible whole anyway -- their writers use :func:`publish_bytes` or :func:`write_bytes`.
+
+    Args:
+        target: The local destination: a bare path or a ``file://`` URI.
+        write: The producer; it fills the staging path it is handed.
+        mode: The published file's permission bits, masked by the process umask.
+        atomic: The atomic-write seam; the default is this module's :class:`AtomicReplace`.
 
     Raises:
         ConfigError: *target* is a remote URI.
@@ -287,22 +301,7 @@ def publish(target: str | Path, write: Callable[[Path], Any], *, mode: int | Non
             f"publish needs a local target, got {target}",
             hint="object stores make each object visible whole: write_bytes them directly",
         )
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if mode is None:
-        mode = stat.S_IMODE(path.stat().st_mode) if path.exists() else 0o666 & ~_umask()
-    else:
-        mode &= ~_umask()
-    # The ``.tmp`` suffix is part of the contract: the run mirror's walk skips ``*.tmp``, so a SIGKILL
-    # between the write and the rename leaves a file the mirror never uploads.
-    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.{os.getpid()}.", suffix=".tmp", dir=path.parent)
-    os.close(fd)
-    tmp = Path(tmp_name)
-    try:
-        write(tmp)
-        os.chmod(tmp, mode)
-        os.replace(tmp, path)
-    finally:
-        tmp.unlink(missing_ok=True)
+    _publish(str(path), write, atomic=atomic or _ATOMIC_REPLACE, mode=mode)
 
 
 def publish_bytes(target: str | Path, payload: bytes, *, mode: int | None = None) -> None:
@@ -320,6 +319,44 @@ def publish_bytes(target: str | Path, payload: bytes, *, mode: int | None = None
 
 #: Serialises the fallback umask read (setting and restoring it is not atomic across threads).
 _UMASK_LOCK = threading.Lock()
+
+
+class AtomicReplace:
+    """This package's atomic-write seam: write a sibling, then one ``os.replace`` (rcp-36).
+
+    The default :func:`publish` passes; a caller with a stricter swap (an ``fsync`` before the rename, a copy onto
+    another device) passes its own :class:`~configkit.ports.AtomicWriter` instead.
+    """
+
+    def write(self, path: Path, data: bytes) -> None:
+        """Replace *path* with *data* in one rename: no reader ever sees a half-written file."""
+        staging = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+        staging.write_bytes(data)
+        os.replace(staging, path)
+
+    def swap(self, path: Path, staged: Path) -> None:
+        """Replace *path* with the file *staged* beside it: one rename."""
+        os.replace(staged, path)
+
+
+_ATOMIC_REPLACE = AtomicReplace()
+
+
+class FsspecUri:
+    """This package's :class:`~configkit.ports.UriIO`: every scheme fsspec serves, the local one included.
+
+    The consumer's half of the storage-URI seam (rcp-38): :func:`configkit.storage.read_uri` and ``write_uri``
+    route a URI through ``Ports.uri`` when the caller has one, so a ``gs://`` object is this layer's job and the
+    library's ``file://`` handler is the only one the library ships.
+    """
+
+    def read(self, uri: str) -> bytes:
+        """The bytes at *uri*."""
+        return read_bytes(uri)
+
+    def write(self, uri: str, data: bytes) -> None:
+        """Write *data* at *uri*."""
+        write_bytes(uri, data)
 
 
 def _umask() -> int:
@@ -351,6 +388,8 @@ def _umask_from_proc() -> int | None:
 
 
 __all__ = [
+    "AtomicReplace",
+    "FsspecUri",
     "exists",
     "filesystem",
     "get",

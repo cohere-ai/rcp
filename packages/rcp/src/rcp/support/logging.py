@@ -3,6 +3,12 @@
 The library only creates loggers (:func:`get_logger`) and installs no handler of its own, with one exception: while
 a run executes, its records also go to the run's ``logs/run.log`` (:func:`rcp.runs.run.execute_run`). The CLI
 calls :func:`configure_logging` once per invocation from its ``-v/-vv``, ``-q`` and ``--log-file`` options.
+
+The logger naming and the log root are :mod:`configkit.ports`'s facade: one :class:`~configkit.ports.LogState`
+over the program's :class:`~configkit.spec.Brand` (:data:`rcp.support.paths.BRAND`), so ``rcp`` is spelled once.
+The handler policy stays here because it is front-end policy the facade does not carry: stderr at the requested
+level without a traceback, the log file at ``DEBUG`` with one, and the tqdm-aware write that keeps a log line
+from breaking a progress bar.
 """
 
 from __future__ import annotations
@@ -11,9 +17,18 @@ import logging
 import sys
 from pathlib import Path
 
-from rcp.errors import ConfigError
+from configkit.ports import LogState
+from configkit.ports import logger as _logger
 
-BASE_LOGGER_NAME = "rcp"
+from rcp.errors import ConfigError
+from rcp.support.paths import BRAND
+
+#: The package's log root: every logger this module hands out sits under it.
+BASE_LOGGER_NAME = BRAND.name
+
+#: The one log state: the brand's root, and the handler :func:`configure_logging` installs.
+_STATE = LogState(brand=BRAND)
+
 _FORMAT = "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"
 
 
@@ -48,10 +63,8 @@ class _NoTracebackFormatter(logging.Formatter):
 
 
 def get_logger(name: str) -> logging.Logger:
-    """The logger for *name*, under the package's ``rcp`` logger (the prefix is added once)."""
-    if name == BASE_LOGGER_NAME or name.startswith(f"{BASE_LOGGER_NAME}."):
-        return logging.getLogger(name)
-    return logging.getLogger(f"{BASE_LOGGER_NAME}.{name}")
+    """The logger for *name*, under the package's log root (the prefix is added once)."""
+    return _logger(_STATE, name)
 
 
 def configure_logging(
@@ -71,7 +84,7 @@ def configure_logging(
     Returns:
         The package's root logger.
     """
-    logger = logging.getLogger(BASE_LOGGER_NAME)
+    logger = logging.getLogger(_STATE.root)
     for handler in [h for h in logger.handlers if getattr(h, "_rcp", False)]:
         logger.removeHandler(handler)
         handler.close()

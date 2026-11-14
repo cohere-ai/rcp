@@ -494,3 +494,75 @@ class TestPublishConcurrency:
         assert not errors
         assert target.read_text(encoding="utf-8").startswith("w")
         assert [path.name for path in tmp_path.iterdir()] == ["shared"]
+
+
+class TestLibrarySeams:
+    """The seams that are :mod:`configkit.storage`'s: the atomic writer, the advisory lock, the run layout and
+    the URI handler. The library owns the discipline; this package owns the fsspec layer the handler routes
+    through, which is why the ``file://`` handler is the only one the library ships (rcp-38, partial by design).
+    """
+
+    def test_publish_takes_an_injected_atomic_writer(self, tmp_path: Path) -> None:
+        """The swap is the caller's (``configkit.ports.AtomicWriter``): the staging file is the library's, the
+        rename is the seam's, and a caller with a stricter swap passes its own."""
+        import os
+
+        swapped: list[tuple[Path, Path]] = []
+
+        class Recording:
+            def write(self, path: Path, data: bytes) -> None:
+                path.write_bytes(data)
+
+            def swap(self, path: Path, staged: Path) -> None:
+                swapped.append((path, staged))
+                os.replace(staged, path)
+
+        target = tmp_path / "out" / "f.bin"
+        storage.publish(target, lambda tmp: tmp.write_bytes(b"payload"), atomic=Recording())
+        assert swapped and swapped[0][0] == target
+        assert target.read_bytes() == b"payload"
+
+    def test_publish_passes_the_mode_to_the_library(self, tmp_path: Path) -> None:
+        """``mode`` is the published file's permission bits, masked by the umask (a run record on a shared
+        cluster filesystem passes ``0o600``)."""
+        import stat
+
+        target = tmp_path / "run" / "manifest.json"
+        storage.publish(target, lambda tmp: tmp.write_bytes(b"{}"), mode=0o600)
+        assert stat.S_IMODE(target.stat().st_mode) == 0o600
+
+    def test_the_publication_lock_is_the_librarys(self, tmp_path: Path) -> None:
+        """One advisory lock for the three hand-written copies: it takes a sibling ``<target>.lock`` and its
+        shared form admits a second reader."""
+        target = tmp_path / "entry"
+        with storage.publication_lock(target):
+            assert (tmp_path / "entry.lock").exists(), "the lock is a sibling file, never the target"
+        with storage.publication_lock(target, shared=True), storage.publication_lock(target, shared=True):
+            pass
+
+    def test_the_uri_handler_is_the_products_fsspec_layer(self, tmp_path: Path) -> None:
+        """``configkit.storage.read_uri``/``write_uri`` route through ``Ports.uri``; this package's handler is
+        fsspec, so a scheme fsspec serves (here ``memory://``) round-trips where the library's own handler
+        would refuse it."""
+        from configkit.storage import read_uri, write_uri
+
+        from rcp.storage.core import FsspecUri
+
+        class _Ports:
+            uri = FsspecUri()
+
+        write_uri("memory://seam/x.bin", b"payload", ports=_Ports())  # type: ignore[arg-type]
+        assert read_uri("memory://seam/x.bin", ports=_Ports()) == b"payload"  # type: ignore[arg-type]
+        with pytest.raises(Exception, match="scheme"):
+            read_uri("memory://seam/x.bin")
+
+    def test_the_runs_root_is_the_librarys_layout(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """``runs_root()`` is ``configkit.storage.RunsRoot``: ``<root>/<run id>`` and
+        ``<root>/<run id>/<step>``, the two joins the pipeline and ``run inspect`` write by hand."""
+        from rcp.support.paths import runs_dir, runs_root
+
+        monkeypatch.setenv("RCP_NDCG_RUNS_DIR", str(tmp_path / "runs"))
+        root = runs_root()
+        assert root.root == runs_dir() == tmp_path / "runs"
+        assert root.run_dir("abc") == tmp_path / "runs" / "abc"
+        assert root.step_dir("abc", "tournament") == tmp_path / "runs" / "abc" / "tournament"

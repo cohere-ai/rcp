@@ -1,7 +1,8 @@
 """Where the package reads and writes by default, resolved lazily from the environment.
 
 Nothing here runs at import and nothing creates a directory: callers create what they write into. The
-variables:
+variables, all named from :data:`BRAND` (the program's one :class:`~configkit.spec.Brand`, so the log root in
+:mod:`rcp.support.logging` and these names cannot drift apart):
 
 * ``RCP_NDCG_CACHE_DIR``: caches (media, remote objects, synced trees). Default ``$XDG_CACHE_HOME/rcp``,
   else ``~/.cache/rcp``.
@@ -14,11 +15,19 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from configkit.spec import Brand
+from configkit.storage import RunsRoot
+
 from rcp.errors import ConfigError
 
-CACHE_DIR_ENV = "RCP_NDCG_CACHE_DIR"
-RUNS_DIR_ENV = "RCP_NDCG_RUNS_DIR"
-LOG_LEVEL_ENV = "RCP_NDCG_LOG_LEVEL"
+#: The program's brand: the log root (``rcp``), the environment prefix (``RCP_NDCG``) and the schema roots the
+#: ``--json`` envelope and the exported schemas sit under. One declaration, read by this module, by
+#: :mod:`rcp.support.logging` and by the schema modules.
+BRAND = Brand(name="rcp", prefix="RCP_NDCG", schema_root="rcp.cli.v1", output_schema_prefix="rcp.run")
+
+CACHE_DIR_ENV = f"{BRAND.prefix}_CACHE_DIR"
+RUNS_DIR_ENV = f"{BRAND.prefix}_RUNS_DIR"
+LOG_LEVEL_ENV = f"{BRAND.prefix}_LOG_LEVEL"
 
 _LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
 
@@ -32,9 +41,19 @@ def cache_dir() -> Path:
     return Path(base) / "rcp"
 
 
+def runs_root() -> RunsRoot:
+    """The runs root as the library's layout: ``$RCP_NDCG_RUNS_DIR``, else ``runs`` in the working directory.
+
+    The root is not created. :meth:`~configkit.storage.RunsRoot.run_dir` and ``step_dir`` are the one join of a
+    run id (and a step) onto it, so a writer and a reader of a run directory cannot spell ``<root>/<run id>``
+    differently.
+    """
+    return RunsRoot(Path(os.environ.get(RUNS_DIR_ENV) or "runs").expanduser())
+
+
 def runs_dir() -> Path:
-    """The runs root: ``$RCP_NDCG_RUNS_DIR``, else ``runs`` relative to the working directory (not created)."""
-    return Path(os.environ.get(RUNS_DIR_ENV) or "runs").expanduser()
+    """The runs root's directory: :func:`runs_root`'s ``root`` (not created)."""
+    return runs_root().root
 
 
 def log_level() -> str:
@@ -79,6 +98,7 @@ def env_int(name: str, default: int) -> int:
 
 
 __all__ = [
+    "BRAND",
     "CACHE_DIR_ENV",
     "LOG_LEVEL_ENV",
     "RUNS_DIR_ENV",
@@ -86,4 +106,5 @@ __all__ = [
     "env_int",
     "log_level",
     "runs_dir",
+    "runs_root",
 ]

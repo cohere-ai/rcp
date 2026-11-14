@@ -92,3 +92,17 @@ def test_load_entry_point_checks_the_base_class_and_names_a_broken_plugin() -> N
         load_entry_point(FakeEntryPoint("a", "m:Base", loaded=Base()), Base, kind="thing")
     with pytest.raises(ConfigError, match="could not be loaded: ImportError: no module"):
         load_entry_point(FakeEntryPoint("a", "m:X", failure=ImportError("no module")), Base, kind="thing")
+
+
+def test_a_provider_that_does_not_load_is_refused_at_the_lookup() -> None:
+    """The load check is the library's (``configkit.plugins.lookup`` loads the chosen provider once), so a
+    broken plugin is refused *at the lookup*, not at the caller's own ``load()``. The refusal is this module's
+    :class:`ConfigError` in this module's wording -- the group, the entry point and the plugin's own failure --
+    so a caller that catches ``RcpNdcgError`` still sees exit 3, not the library's ``runtime_error`` code."""
+    entry = FakeEntryPoint("a", "m:X", failure=ImportError("no module"))
+    with pytest.raises(ConfigError) as raised:
+        provider_of([entry], "rcp.test", "a", kind="thing")
+    assert str(raised.value) == "the 'a' entry point of 'rcp.test' could not be loaded: ImportError: no module"
+    assert raised.value.hint == "fix or uninstall the package that declares it"
+    assert isinstance(raised.value.__cause__, ImportError), "the plugin's own failure is the cause"
+    assert raised.value.details == {"name": "a", "group": "rcp.test", "provider": "m:X"}
