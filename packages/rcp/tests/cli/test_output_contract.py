@@ -22,6 +22,7 @@ from rcp.errors import ExitCode
 
 
 def _leaves_with_json() -> list[str]:
+    """The leaves that actually declare the ``--json`` flag (what ``_declared_leaves`` is asserted against)."""
     return sorted(
         path.removeprefix("rcp ")
         for path, cmd in walk()
@@ -30,7 +31,17 @@ def _leaves_with_json() -> list[str]:
 
 
 def _declared_leaves() -> list[str]:
+    """The leaves that declare a :class:`~rcp.cli.command.CommandSpec`; the envelope matrix's subject."""
     return sorted(path.removeprefix("rcp ") for path, cmd in walk() if hasattr(cmd, "spec"))
+
+
+def test_every_declared_leaf_carries_the_json_flag() -> None:
+    """FCL-G F1 / QC-3 H7: the envelope matrix selected its own subject by the flag it verified, so a leaf
+    losing ``--json`` left both parametrized tests (the bare twin accepts exit 2) and nothing failed. The
+    matrix is the declaration; the flag is asserted against it. ``mcp serve`` is the one leaf with no
+    declaration (a server loop, no result), and :func:`test_every_leaf_is_declared_over_a_request_model`
+    states that exception."""
+    assert set(_declared_leaves()) - {"mcp serve"} == set(_leaves_with_json())
 
 
 def _one_document(stdout: str) -> dict:
@@ -46,7 +57,7 @@ def runner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> CliRunner:
     return CliRunner()
 
 
-@pytest.mark.parametrize("path", _leaves_with_json())
+@pytest.mark.parametrize("path", _declared_leaves())
 def test_a_usage_error_is_one_envelope(runner: CliRunner, path: str) -> None:
     result = runner.invoke(cli, [*path.split(), "--json", "--no-such-option"])
 
