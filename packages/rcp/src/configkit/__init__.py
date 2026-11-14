@@ -35,6 +35,17 @@ from configkit.faults import (
     require,
     warn,
 )
+from configkit.overrides import (
+    VALUE_ERRORS,
+    Override,
+    apply,
+    from_env,
+    merge_layers,
+    parse,
+    parse_value,
+    pipeline,
+    unset,
+)
 from configkit.ports import (
     AtomicWriter,
     Budget,
@@ -75,6 +86,16 @@ __all__ = [
     "warn",
     "classify",
     "require",
+    # overrides.py
+    "Override",
+    "parse",
+    "parse_value",
+    "from_env",
+    "apply",
+    "pipeline",
+    "merge_layers",
+    "unset",
+    "VALUE_ERRORS",
     # ports.py
     "Clock",
     "Budget",
