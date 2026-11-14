@@ -3,7 +3,8 @@
 ``configkit`` lives in the ``cohere-rcp`` wheel, so the only thing that makes a future move to another
 distribution a directory move is a rule the tree cannot break silently: the library imports no module of
 ``rcp``, ``rcp_core`` or ``rcp_vllm``, uses no relative import (a relative import is a seam that would not
-survive the move), and reaches no product module through a string-literal import either. The first half of
+survive the move), and reaches no product module through a string-literal import or a name built from one
+(``f"rcp.{name}"``, ``"rcp." + name``) either. The first half of
 this module parses every file of the package with :mod:`ast`, at every scope, and fails on a finding; the
 second half proves the same rule at run time, in a subprocess, and from an extracted copy of the package.
 
@@ -77,18 +78,39 @@ def _root(dotted: str) -> str:
     return dotted.split(".", 1)[0]
 
 
+def _literal_prefix(node: ast.expr) -> str | None:
+    """The literal start of a module name built at run time: an f-string's first part, a concatenation's left.
+
+    ``import_module(f"rcp.{name}")`` and ``import_module("rcp." + name)`` name the product with no
+    ``ast.Constant`` holding the whole module, so the scan reads the part that is literal. A name with no literal
+    start (``f"{package}.errors"``) names nothing this scan can decide.
+    """
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.JoinedStr):
+        first = node.values[0] if node.values else None
+        return first.value if isinstance(first, ast.Constant) and isinstance(first.value, str) else None
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        return _literal_prefix(node.left)
+    return None
+
+
 def _dynamic_target(node: ast.Call) -> str | None:
     """The product module *node* loads through a string literal, if it does.
 
     The three forms the package could use are read by their call name: ``__import__("rcp…")``,
     ``importlib.import_module("rcp…")``/``find_spec("rcp…")``, and a ``pkgutil`` walk whose path names a
-    product directory. A docstring that mentions ``rcp`` is not a call and is not a finding.
+    product directory. A module name built at run time is read by its literal prefix. A docstring that mentions
+    ``rcp`` is not a call and is not a finding.
     """
     name = _callee(node.func)
     if name in _IMPORT_CALLS:
         first = node.args[0] if node.args else None
         if isinstance(first, ast.Constant) and isinstance(first.value, str) and _root(first.value) in FORBIDDEN_ROOTS:
             return first.value
+        prefix = _literal_prefix(first) if first is not None else None
+        if prefix is not None and _root(prefix) in FORBIDDEN_ROOTS:
+            return prefix
     if name in _WALK_CALLS and _owner(node.func) == "pkgutil":
         for argument in node.args:
             for literal in _string_constants(argument):
@@ -201,6 +223,8 @@ def test_no_product_import_at_any_scope() -> None:
         ("from rcp_core.schemas import accepted_schema_ids", "rcp_core.schemas"),
         ("from . import faults", "."),
         ('import importlib\nimportlib.import_module("rcp.errors")', "rcp.errors"),
+        ('import importlib\nname = "errors"\nimportlib.import_module(f"rcp.{name}")', "rcp."),
+        ('import importlib\nname = "errors"\nimportlib.import_module("rcp." + name)', "rcp."),
         ('import pkgutil\npkgutil.walk_packages(["vendor/rcp"])', "vendor/rcp"),
     ],
 )

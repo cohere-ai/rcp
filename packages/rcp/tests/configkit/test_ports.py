@@ -96,16 +96,17 @@ def _restore_handlers() -> Iterator[None]:
 
 def test_ports_carries_the_seven_services_and_is_frozen() -> None:
     """rcp-3: one record naming every host service, and a consumer cannot swap one in place."""
-    ports = _ports(_Sink())
-    assert [field for field in Ports.__dataclass_fields__] == [
-        "clock",
-        "budget",
-        "sink",
-        "exit_codes",
-        "renderer",
-        "atomic",
-        "uri",
-    ]
+    sink = _Sink()
+    ports = _ports(sink)
+    assert set(Ports.__dataclass_fields__) == {"clock", "budget", "sink", "exit_codes", "renderer", "atomic", "uri"}
+    # L19: the record is exercised through the fakes, so a field that carries nothing reddens this test.
+    assert ports.clock.now() == 0.0
+    assert ports.budget.check() is None
+    assert ports.sink is sink
+    assert ports.exit_codes.get("value_error", None) is None
+    assert ports.renderer(1) == "1"
+    assert isinstance(ports.atomic, _Atomic)
+    assert ports.uri.read("file:///x") == b""
     with pytest.raises(FrozenInstanceError):
         ports.clock = _Clock()
 

@@ -15,6 +15,8 @@ from configkit.faults import Fault
 from configkit.roles import Role, identity_of, local_inputs, path_fields, redact, roles_of, safe_url
 from pydantic import BaseModel, ConfigDict, Field
 
+from rcp.support.resources import REDACTED
+
 
 class _EveryRole(BaseModel):
     """One field per role: the vocabulary's seven members, all declared."""
@@ -298,7 +300,7 @@ def test_redact_hides_secrets_and_url_credentials() -> None:
     redacted = redact(payload, model=_Recorded)
     assert redacted == {
         "name": "n",
-        "token_key": "<redacted>",
+        "token_key": REDACTED,
         "base_url": "https://host:8080/v1",
         "inner": {"endpoint": "https://host/v1", "checkpoint": "/checkpoints/x"},
     }
@@ -312,7 +314,7 @@ def test_redact_redacts_a_key_the_model_does_not_declare() -> None:
     received through ``extra="allow"`` -- the same keys ``identity_of`` treats as part of the identity.
     """
     payload = {"name": "n", "token_key": "s", "base_url": "u", "inner": {}, "extra": "s3cr3t"}
-    assert redact(payload, model=_Recorded)["extra"] == "<redacted>"
+    assert redact(payload, model=_Recorded)["extra"] == REDACTED
     assert redact(payload, model=_Recorded)["name"] == "n"
 
 

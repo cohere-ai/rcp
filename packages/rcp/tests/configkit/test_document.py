@@ -12,10 +12,8 @@ reason, and the two-base rule is only visible from a directory other than the wo
 
 from __future__ import annotations
 
-import hashlib
 import json
 import sys
-from collections.abc import Mapping
 from dataclasses import FrozenInstanceError
 from pathlib import Path
 from typing import Annotated, Any, ClassVar, Literal
@@ -36,6 +34,7 @@ from configkit.document import (
     validate,
 )
 from configkit.faults import Fault
+from configkit.identity import hash_payload
 from configkit.roles import Role, identity_of
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -206,15 +205,13 @@ def test_resolves_a_relative_path_against_the_documents_own_directory(
 
 def test_resolution_happens_before_hashing(tmp_path: Path) -> None:
     """Rule 5: two documents that differ only in where they live are two fingerprints, not one."""
-
-    def digest(payload: Mapping[str, Any]) -> str:
-        return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
-
     text = "source: data/inputs.jsonl\noutput: runs\nname: x\n"
     first = load(_write(tmp_path / "a" / "doc.yaml", text), _Doc)
     second = load(_write(tmp_path / "b" / "doc.yaml", text), _Doc)
-    assert digest(read(tmp_path / "a" / "doc.yaml").payload) == digest(read(tmp_path / "b" / "doc.yaml").payload)
-    assert digest({"source": first.source}) != digest({"source": second.source})
+    assert hash_payload(read(tmp_path / "a" / "doc.yaml").payload) == hash_payload(
+        read(tmp_path / "b" / "doc.yaml").payload
+    )
+    assert hash_payload({"source": first.source}) != hash_payload({"source": second.source})
 
 
 # --- the two bases, and the absolute-path rule ---------------------------------------------------------------

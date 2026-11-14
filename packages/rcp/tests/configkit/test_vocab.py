@@ -31,6 +31,9 @@ from configkit.vocab import (
 )
 from pydantic import BaseModel, ValidationError
 
+from rcp.calibration._projection import QUERY_ID_SEP
+from rcp.data.text_policy import DEFAULT_MAX_TOKENS
+
 
 class _Sized(BaseModel):
     """A model whose field is the library's typed world size, so the validator is exercised where it is used."""
@@ -269,15 +272,20 @@ def test_budget_key_is_a_shape_and_a_role() -> None:
 
 def test_gains_key_is_the_namespaced_query_id() -> None:
     """The gains of one dataset scored alone need no name; a suite's parts share query ids, so they are
-    namespaced ``<dataset>||<query_id>`` (rcp-47, the product's ``QUERY_ID_SEP``)."""
-    assert GainsKey.of("ds", "q1") == "ds||q1"
-    named = GainsKey("ds||q1")
+    namespaced ``<dataset>||<query_id>`` (rcp-47, the product's ``QUERY_ID_SEP``).
+
+    M6: the pin reads the product's constant, so a change on either side reddens this test.
+    """
+    assert GainsKey.of("ds", "q1") == f"ds{QUERY_ID_SEP}q1"
+    named = GainsKey(f"ds{QUERY_ID_SEP}q1")
     assert (named.dataset, named.query) == ("ds", "q1")
     bare = GainsKey("q1")
     assert (bare.dataset, bare.query) == (None, "q1")
 
 
-@pytest.mark.parametrize("written", ["", "  ", "||q1", "ds||", "a||b||c"])
+@pytest.mark.parametrize(
+    "written", ["", "  ", f"{QUERY_ID_SEP}q1", f"ds{QUERY_ID_SEP}", f"a{QUERY_ID_SEP}b{QUERY_ID_SEP}c"]
+)
 def test_a_malformed_gains_key_is_refused(written: str) -> None:
     """A key that names no query, or two separators, is refused rather than split by guess."""
     with pytest.raises(Fault):
@@ -285,11 +293,11 @@ def test_a_malformed_gains_key_is_refused(written: str) -> None:
 
 
 def test_cut_for_pins_the_shape_cuts() -> None:
-    """The cut is in tokens of the shape's tokenizer, and it is 32768 for every shape the product reads
+    """The cut is in tokens of the shape's tokenizer, and it is the product's cap for every shape it reads
     (``rcp.data.text_policy.DEFAULT_MAX_TOKENS``, 2**15). The number is pinned here: it does not move by accident."""
-    assert cut_for("query") == 32768
-    assert cut_for("document") == 32768
-    assert cut_for("pair") == 32768
+    assert cut_for("query") == DEFAULT_MAX_TOKENS
+    assert cut_for("document") == DEFAULT_MAX_TOKENS
+    assert cut_for("pair") == DEFAULT_MAX_TOKENS
     assert isinstance(cut_for("document"), int)
 
 

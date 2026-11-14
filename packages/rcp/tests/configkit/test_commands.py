@@ -370,15 +370,21 @@ def test_doctor_facts_is_the_declared_record() -> None:
         cache_dir=Path("/cache"),
         runs_dir=Path("/runs"),
     )
-    assert [name for name in DoctorFacts.__dataclass_fields__] == [
+    assert set(DoctorFacts.__dataclass_fields__) == {
         "distributions",
         "pinned_sibling",
         "extras",
         "credential_variables",
         "cache_dir",
         "runs_dir",
-    ]
+    }
+    # L19: the record is exercised, so a field that carries nothing reddens this test.
+    assert facts.distributions == {"p": "1.0"}
+    assert facts.pinned_sibling == ("p-core", "1.0")
+    assert facts.extras == {"yaml": "p[yaml]"}
+    assert facts.credential_variables == ("P_TOKEN",)
     assert facts.cache_dir == Path("/cache")
+    assert facts.runs_dir == Path("/runs")
 
 
 def test_verb_is_command() -> None:

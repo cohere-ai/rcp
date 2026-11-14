@@ -91,9 +91,15 @@ def test_a_value_with_no_json_form_is_refused_not_stringified() -> None:
 
 
 def test_short_bounds_and_the_default_length() -> None:
-    """D5: the default length is :data:`SHORT_ID_LENGTH`, and a caller may pass its own."""
+    """D5: the default length is :data:`SHORT_ID_LENGTH`, and a caller may pass its own.
+
+    M6: the pin reads a length the core produces (the bare ``16`` its ``key`` passes to ``short()``), so the two
+    implementations' lengths cannot drift.
+    """
     digest = _digest()
-    assert SHORT_ID_LENGTH == 16
+    schemas = pytest.importorskip("rcp_core.schemas")
+    family = schemas.JudgementFamily(stage="rubric", judge_model="m", prompt_hash="0" * 64, parse_version=1)
+    assert len(family.key) == SHORT_ID_LENGTH
     assert short(digest, 16) == digest[:16]
     assert len(short(digest, 16)) == 16
     assert len(short(digest, 12)) == 12
