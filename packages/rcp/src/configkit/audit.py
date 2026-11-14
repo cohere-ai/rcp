@@ -306,7 +306,7 @@ def _check_fault_table(model: type[BaseModel], faults: frozenset[str], modules: 
     table = getattr(module, _FAULT_TABLE, None) if module is not None else None
     if not _is_fault_table(table):
         return
-    declared = {code for _, code in table}
+    declared = {code for _, code, _owner in table}
     for code in sorted(declared - faults):
         findings.append(
             f"A5 {name}.{code}: {_FAULT_TABLE} declares a code no Fault subclass carries, so nothing raises it"
@@ -358,12 +358,12 @@ def _check_types_module(model: type[BaseModel], allowed: frozenset[str], finding
         )
 
 
-def _is_fault_table(table: Any) -> TypeGuard[Sequence[tuple[Any, str]]]:
-    """Whether *table* is a fault table: a sequence of ``(exception class, code)`` rows."""
+def _is_fault_table(table: Any) -> TypeGuard[Sequence[tuple[Any, str, str]]]:
+    """Whether *table* is a fault table: a sequence of ``(exception class, code, owner)`` rows."""
     if isinstance(table, (str, bytes)) or not isinstance(table, Sequence):
         return False
     for row in table:
-        if not (isinstance(row, tuple) and len(row) == 2 and isinstance(row[1], str)):
+        if not (isinstance(row, tuple) and len(row) == 3 and isinstance(row[1], str)):
             return False
     return True
 

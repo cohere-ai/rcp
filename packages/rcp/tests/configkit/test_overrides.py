@@ -338,7 +338,7 @@ def test_pipeline_refuses_an_override_with_no_base(tmp_path: Path) -> None:
 
 def test_value_errors_is_the_published_error_table() -> None:
     """rcp 12: one table, one code and one template per refusal, and every code is a fault code."""
-    assert {code for code, _ in VALUE_ERRORS.values()} <= {code for _, code in FAULT_CODES}
+    assert {code for code, _ in VALUE_ERRORS.values()} <= {code for _, code, _owner in FAULT_CODES}
     assert set(VALUE_ERRORS) == {
         "not_a_pair",
         "repeated_path",

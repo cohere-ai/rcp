@@ -113,20 +113,21 @@ class OptionalDependencyMissing(Fault):
     code = "optional.missing"
 
 
-#: The generic rows: the exceptions the library itself can leak, and the stable code each maps to. The rows are
-#: disjoint, so their order decides nothing; a consumer's narrower rows go in front of them in
+#: The generic rows: the exceptions the library itself can leak, the stable code each maps to, and the owner that
+#: declares it (the plan's `ROWS` shape, so a consumer's `owner="rcp"` rows are the same kind of data). The rows
+#: are disjoint, so their order decides nothing; a consumer's narrower rows go in front of them in
 #: :func:`register_fault_codes`'s table. A consumer's rows are its own exception classes, never a library class.
-FAULT_CODES: tuple[tuple[type[BaseException], str], ...] = (
-    (OSError, "os_error"),
-    (RuntimeError, "runtime_error"),
-    (ValueError, "value_error"),
-    (ModuleNotFoundError, "optional.missing"),
+FAULT_CODES: tuple[tuple[type[BaseException], str, str], ...] = (
+    (OSError, "os_error", "configkit"),
+    (RuntimeError, "runtime_error", "configkit"),
+    (ValueError, "value_error", "configkit"),
+    (ModuleNotFoundError, "optional.missing", "configkit"),
 )
 
 
 def register_fault_codes(
-    rows: Iterable[tuple[type[BaseException], str]],
-) -> tuple[tuple[type[BaseException], str], ...]:
+    rows: Iterable[tuple[type[BaseException], str, str]],
+) -> tuple[tuple[type[BaseException], str, str], ...]:
     """The consumer's rows followed by the library's generic ones, refusing a code declared twice.
 
     The call *returns* the table; it registers nothing in module state, so two consumers in one process cannot
@@ -135,20 +136,27 @@ def register_fault_codes(
     builtins.
 
     Args:
-        rows: The consumer's rows, narrowest first: an exception class and the stable code it reports.
+        rows: The consumer's rows, narrowest first: an exception class, the stable code it reports, and the
+            owner that declares the code (``"rcp"``).
 
     Returns:
         The consumer's rows, then :data:`FAULT_CODES`.
 
     Raises:
-        ValueErrorFault: a code appears twice (in the consumer's rows or in a generic row), or is empty.
+        ValueErrorFault: a row is not ``(exception, code, owner)``, a code is empty or appears twice (in the
+            consumer's rows or in a generic row), or a row names no owner.
     """
     table = tuple(rows) + FAULT_CODES
     seen: set[str] = set()
     duplicates: list[str] = []
-    for _, code in table:
+    for row in table:
+        if len(row) != 3:
+            raise ValueErrorFault(f"a fault row is (exception, code, owner), got {row!r}")
+        _, code, owner = row
         if not code:
             raise ValueErrorFault("a fault code must be a non-empty string")
+        if not owner:
+            raise ValueErrorFault(f"the fault code {code!r} names no owner; a row says whose refusal it is")
         if code in seen and code not in duplicates:
             duplicates.append(code)
         seen.add(code)

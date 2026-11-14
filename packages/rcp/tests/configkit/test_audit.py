@@ -231,7 +231,7 @@ class TreeFault(Fault):
     code = "tree_error"
 
 
-FAULT_CODES = register_fault_codes(((TreeFault, "tree_error"), (KeyError, "orphan_code")))
+FAULT_CODES = register_fault_codes(((TreeFault, "tree_error", "probe"), (KeyError, "orphan_code", "probe")))
 
 
 class Leaf(BaseModel):
@@ -242,7 +242,9 @@ class Leaf(BaseModel):
 ROOTS = (Leaf,)
 """
 
-_A5_CLEAN = _A5.replace('((TreeFault, "tree_error"), (KeyError, "orphan_code"))', '((TreeFault, "tree_error"),)')
+_A5_CLEAN = _A5.replace(
+    '((TreeFault, "tree_error", "probe"), (KeyError, "orphan_code", "probe"))', '((TreeFault, "tree_error", "probe"),)'
+)
 
 
 def _a5(root: Path, defect: bool) -> list[str]:

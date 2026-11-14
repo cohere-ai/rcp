@@ -45,17 +45,17 @@ def test_a_raise_carries_code_and_message_and_no_exit_code() -> None:
 
 def test_the_generic_table_is_the_four_generic_rows() -> None:
     """L2.3: the library ships the generic rows only, and no consumer code."""
-    assert [(cls, code) for cls, code in FAULT_CODES] == [
-        (OSError, "os_error"),
-        (RuntimeError, "runtime_error"),
-        (ValueError, "value_error"),
-        (ModuleNotFoundError, "optional.missing"),
+    assert [(cls, code, owner) for cls, code, owner in FAULT_CODES] == [
+        (OSError, "os_error", "configkit"),
+        (RuntimeError, "runtime_error", "configkit"),
+        (ValueError, "value_error", "configkit"),
+        (ModuleNotFoundError, "optional.missing", "configkit"),
     ]
 
 
 def test_every_subclass_is_in_the_table() -> None:
     """D2: a ``Fault`` subclass carries a code the table declares (the mutation adds one whose code it does not)."""
-    codes = {code for _, code in FAULT_CODES}
+    codes = {code for _, code, _owner in FAULT_CODES}
     subclasses = {
         name: cls
         for name, cls in vars(faults).items()
@@ -68,15 +68,28 @@ def test_every_subclass_is_in_the_table() -> None:
 def test_a_duplicated_code_is_refused() -> None:
     """D1: a code declared twice names two faults, so the table refuses it."""
     with pytest.raises(ValueErrorFault, match="declared twice"):
-        register_fault_codes([(KeyError, "value_error")])
+        register_fault_codes([(KeyError, "value_error", "rcp")])
     with pytest.raises(ValueErrorFault, match="declared twice"):
-        register_fault_codes([(KeyError, "config_invalid"), (LookupError, "config_invalid")])
+        register_fault_codes([(KeyError, "config_invalid", "rcp"), (LookupError, "config_invalid", "rcp")])
+
+
+def test_a_row_names_the_owner_that_declares_its_code() -> None:
+    """L4: plan §4.4's `ROWS` is `(fault class, stable code, owner)`, and R1's rows are `owner="rcp"`.
+
+    A code with no owner cannot be attributed when two consumers in one process register their tables.
+    """
+    table = register_fault_codes([(KeyError, "config_invalid", "rcp")])
+    assert table[0] == (KeyError, "config_invalid", "rcp")
+    with pytest.raises(ValueErrorFault, match="owner"):
+        register_fault_codes([(KeyError, "config_invalid", "")])  # type: ignore[list-item]
+    with pytest.raises(ValueErrorFault, match="row"):
+        register_fault_codes([(KeyError, "config_invalid")])  # type: ignore[list-item]
 
 
 def test_register_returns_the_consumer_rows_then_the_generic_ones() -> None:
     """The table is the caller's value: the consumer's narrow rows first, the generic builtins last."""
-    table = register_fault_codes([(KeyError, "config_invalid")])
-    assert table[0] == (KeyError, "config_invalid")
+    table = register_fault_codes([(KeyError, "config_invalid", "rcp")])
+    assert table[0] == (KeyError, "config_invalid", "rcp")
     assert table[1:] == FAULT_CODES
     assert register_fault_codes(()) == FAULT_CODES
 
