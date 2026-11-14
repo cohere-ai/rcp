@@ -26,6 +26,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 
 import pytest
 from configkit.audit import audit, pure, scan
@@ -659,9 +660,33 @@ def test_scan_is_deterministic(tmp_path: Path) -> None:
     assert scan(root) == scan(root)
 
 
+#: The rule set the library's own source is held to: the three consumer roots the isolation rule forbids, the
+#: repository names no command group may take, a benchmark name and a removable schema spelling it must not ship,
+#: and the package's one layer (a flat package has no upward import to point).
+_LIBRARY_RULES: dict[str, Any] = {
+    "consumer_imports": ("rcp", "rcp_core", "rcp_vllm"),
+    "repository_names": ("rcp", "rcp-ndcg", "rcp-core", "emb-train", "emb-eval"),
+    "data_pins": ("scifact", "msmarco"),
+    "layers": ("configkit",),
+    "removable": ("rcp-ndcg.result-record.v1",),
+}
+
+
 def test_the_library_scans_itself_clean() -> None:
-    """Criterion 5: every check runs over the library's own source, and none fires."""
-    assert scan(PACKAGE, seam_prefix="_") == []
+    """Criterion 5: every check runs over the library's own source, and none fires.
+
+    L11: the five rule sets used to be the defaults -- empty -- so S2, S3, S4, S6 and S8 returned before reading a
+    line and half the checks were never run by the test that claims they all are.
+    """
+    assert scan(PACKAGE, seam_prefix="_", **_LIBRARY_RULES) == []
+
+
+def test_the_library_rule_set_is_live(tmp_path: Path) -> None:
+    """The control for the scan above: the same parameters find a planted defect, so the clean result is real."""
+    defect = 'from configkit.commands import Command\n\n_COMMANDS = (Command(name="rcp"),)  # DEFECT\n'
+    root = _write(tmp_path / "tree", {"leaf.py": defect})
+    found = scan(root, seam_prefix="_", **_LIBRARY_RULES)
+    assert found == [f"S2 {_marked(root, 'leaf.py')}: a command group named after the repository 'rcp'"]
 
 
 def test_audit_of_no_root_is_empty() -> None:
