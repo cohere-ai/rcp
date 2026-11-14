@@ -1,9 +1,14 @@
 {
   "recorded_with": [
     "rcp_core._hashing.canonical_json and rcp_core._hashing.hash_payload",
-    "emb_eval_contracts.identity.canonical_json and emb_eval_contracts.identity.hash_payload"
+    "emb_eval_contracts.identity.canonical_json and emb_eval_contracts.identity.hash_payload",
+    "configkit.identity.canonical_bytes and configkit.identity.hash_payload"
   ],
-  "agreement": "both implementations produced identical canonical text and digest for every vector before this file was written",
+  "agreement": "every implementation in recorded_with produced the recorded canonical text and digest for every vector; test_identity.py checks configkit against the record and test_identity_parity.py checks rcp_core against the same record, so the two are compared rather than trusted",
+  "payload_kinds": {
+    "path": "the payload is Path(<the recorded string>)",
+    "enum": "the payload is _Tie(<the recorded string>), a str Enum member"
+  },
   "vectors": [
     {
       "name": "sorted-keys",
@@ -108,6 +113,33 @@
       },
       "canonical": "{\"data\":{\"queries\":3},\"metric\":\"ndcg@10\",\"runtime\":{\"seed\":7}}",
       "digest": "edef4594530d647a68ca00edea961d437485d050d300af9a791217c8f6cf4736"
+    },
+    {
+      "name": "negative-zero",
+      "payload": {
+        "zero": -0.0,
+        "count": 1
+      },
+      "canonical": "{\"count\":1,\"zero\":0.0}",
+      "digest": "53c2d0c6facd8856665fa7f51c8851e4c6341e41d965a11f56f4ae2d52a1ca43"
+    },
+    {
+      "name": "path",
+      "payload_kind": "path",
+      "payload": {
+        "checkpoint": "checkpoints/model.pt"
+      },
+      "canonical": "{\"checkpoint\":\"checkpoints/model.pt\"}",
+      "digest": "8b7191bc5d6a47aee6a0ce7c82770fdc97dda0db5ecf433b9bc0755036863b7f"
+    },
+    {
+      "name": "enum",
+      "payload_kind": "enum",
+      "payload": {
+        "metric": "group_mean"
+      },
+      "canonical": "{\"metric\":\"group_mean\"}",
+      "digest": "02657fcf91f49a14dfd6bbeaeb10ecfc1048d3a4df82070bcca71a0db5102fc9"
     }
   ]
 }

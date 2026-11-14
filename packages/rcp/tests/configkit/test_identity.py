@@ -1,10 +1,10 @@
 """One canonical form, one digest, one chain: the bytes are the ones the two consumers already produce.
 
 The canonical form is not invented here. ``rcp_core._hashing`` and ``emb_eval_contracts.identity`` both serialise
-a payload with sorted keys, compact separators, UTF-8 and no NaN, and they agree byte for byte; the fixture records
-their output for a corpus, so a change to the dump (a dropped ``sort_keys``, a ``default=`` fallback) fails here
-rather than in a stored digest. The corpus is JSON-native data: a value with no JSON form is refused, never
-stringified into a digest that changes between processes.
+a payload with one declared encoder, sorted keys, compact separators, UTF-8 and no NaN, and they agree byte for
+byte; the fixture records every implementation's output for a corpus, so a change to the encoder (a dropped
+``sort_keys``, a ``default=`` fallback, an unnormalised ``-0.0``) fails here rather than in a stored digest. A value
+with no declared encoding is refused, never stringified into a digest that changes between processes.
 """
 
 from __future__ import annotations
@@ -12,7 +12,6 @@ from __future__ import annotations
 import json
 from dataclasses import FrozenInstanceError
 from pathlib import Path
-from typing import Any
 
 import pytest
 from configkit.identity import (
@@ -25,12 +24,8 @@ from configkit.identity import (
     identity_chain,
     short,
 )
+from identity_corpus import FIXTURE, VECTORS, Tie, payload_of
 from pydantic import BaseModel, ConfigDict
-
-#: The recorded corpus: for each payload, the canonical text and the digest both consumers produced.
-FIXTURE = Path(__file__).parent / "fixtures/identity_vectors.json"
-
-_VECTORS: list[dict[str, Any]] = json.loads(FIXTURE.read_text(encoding="utf-8"))["vectors"]
 
 
 def _digest(text: str = "payload") -> str:
@@ -39,17 +34,37 @@ def _digest(text: str = "payload") -> str:
 
 
 def test_byte_identical_to_the_recorded_fixture() -> None:
-    """D4: every recorded payload serialises to the recorded bytes and hashes to the recorded digest."""
+    """D4/B1: every recorded payload serialises to the recorded bytes and hashes to the recorded digest.
+
+    The record is the one ``rcp_core._hashing`` and ``emb_eval_contracts.identity`` produce; ``-0.0``, a ``Path``
+    and an ``Enum`` member are in the corpus because those are the three rows where the two serialisers could
+    disagree, and ``test_identity_parity.py`` compares the core's output against the same record.
+    """
     document = json.loads(FIXTURE.read_text(encoding="utf-8"))
     assert document["recorded_with"] == [
         "rcp_core._hashing.canonical_json and rcp_core._hashing.hash_payload",
         "emb_eval_contracts.identity.canonical_json and emb_eval_contracts.identity.hash_payload",
+        "configkit.identity.canonical_bytes and configkit.identity.hash_payload",
     ]
-    assert len(_VECTORS) == 10
-    for vector in _VECTORS:
-        payload = vector["payload"]
+    assert len(VECTORS) == 13
+    for vector in VECTORS:
+        payload = payload_of(vector)
         assert canonical_bytes(payload) == vector["canonical"].encode("utf-8"), vector["name"]
         assert hash_payload(payload) == vector["digest"], vector["name"]
+
+
+def test_the_declared_encoder_normalises_the_values_json_has_no_form_for() -> None:
+    """B1: ``-0.0`` is ``0.0``, a ``Path`` its string, an ``Enum`` member its declared value.
+
+    The three rules are ``rcp_core._hashing.canonical``'s, ported so that one payload cannot get two digests: a
+    ``-0.0`` that serialised as ``-0.0`` was a second canonical form, and a ``Path`` that raised was a payload the
+    core hashes and the library refused.
+    """
+    assert canonical_bytes({"zero": -0.0}) == b'{"zero":0.0}'
+    assert hash_payload({"zero": -0.0}) == hash_payload({"zero": 0.0})
+    assert canonical_bytes({"checkpoint": Path("checkpoints/model.pt")}) == b'{"checkpoint":"checkpoints/model.pt"}'
+    assert canonical_bytes({"metric": Tie.GROUP}) == b'{"metric":"group_mean"}'
+    assert canonical_bytes({"metric": Tie.GROUP}) == canonical_bytes({"metric": "group_mean"})
 
 
 def test_the_canonical_form_is_sorted_compact_utf8_and_refuses_nan() -> None:
@@ -68,6 +83,10 @@ def test_a_value_with_no_json_form_is_refused_not_stringified() -> None:
         hash_payload({"x": object()})
     with pytest.raises(TypeError):
         hash_payload({"x": {1, 2}})
+    with pytest.raises(TypeError):
+        hash_payload({1: "a key that is not a str"})
+    with pytest.raises(TypeError):
+        hash_payload({"x": b"bytes have no JSON form"})
 
 
 def test_short_bounds_and_the_default_length() -> None:

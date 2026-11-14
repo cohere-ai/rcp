@@ -4,19 +4,32 @@ A digest is a claim -- *these two things are interchangeable* -- and it is only 
 the same one everywhere. The canonical form here is not invented: ``rcp_core._hashing`` and
 ``emb_eval_contracts.identity`` both produce it, and they agree byte for byte:
 
-    json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
+    json.dumps(canonical(payload), sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
         .encode("utf-8")
 
 :func:`canonical_bytes` is that call, :func:`hash_payload` is SHA-256 over it, and ``tests/configkit/
-fixtures/identity_vectors.json`` records both implementations' output for a corpus, so a dropped ``sort_keys`` or
-an added ``default=`` fails a test rather than a stored digest. The payload is JSON-native data (``str``, ``int``,
-``float``, ``bool``, ``None``, a list or tuple, a mapping with ``str`` keys): a value with no JSON form is refused
-by :mod:`json` itself, because a ``str()`` fallback puts a memory address in a key that then changes between
-processes.
+fixtures/identity_vectors.json`` records every implementation's output for a corpus, so a dropped ``sort_keys``, an
+added ``default=``, an unnormalised ``-0.0`` or a refused ``Path`` fails a test rather than a stored digest.
+
+What makes it canonical, rule for rule ``rcp_core._hashing.canonical``'s (the library may not import the core, so
+the rule is mirrored here and ``tests/configkit/test_identity_parity.py`` compares the two):
+
+* keys sorted, no insertion-order dependence, compact separators;
+* one declared encoder -- an ``Enum`` member is its declared value, a ``Path`` its string, a pydantic model its
+  ``model_dump()``, an aware ``datetime`` and a ``date`` their ISO text, a tuple a list -- and everything else is
+  refused. ``json.dumps(..., default=str)`` is how ``<object at 0x7f3c...>`` lands in a key that then changes
+  between processes: a refusal is a bug report, a fallback ``str()`` a silent non-deterministic identity;
+* ``NaN``/``Infinity`` refused (not JSON, and ``NaN != NaN`` makes an identity that never matches itself),
+  ``-0.0`` normalised to ``0.0`` (``-0.0 == 0.0``, so they must not hash apart);
+* ``set``/``bytes`` refused, and a mapping key that is not a ``str`` too -- a set has no canonical order, bytes
+  have no JSON form, and an ``int`` key would be stringified into a key nobody wrote.
+
+``int`` and ``float`` are deliberately not unified: a count of ``1`` and a fraction of ``1.0`` are different
+settings, so they must not share a key.
 
 The module hashes with :mod:`hashlib` and imports no ``rcp_core``: the library is the successor, not a client.
 ``rcp_core`` and ``emb_eval_contracts.identity`` re-export these functions after the extraction and keep no copy;
-until then the recorded fixture is the guard.
+until then the recorded fixture and the parity test are the guard.
 
 :data:`SHORT_ID_LENGTH` is rcp's length today (16), and it is the *default*, not a policy: emb-eval passes 12 and
 8 to the same :func:`short`.
@@ -26,8 +39,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Mapping
+import math
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import date, datetime
+from enum import Enum
+from pathlib import PurePath
 from types import MappingProxyType
 from typing import Any, Final
 
@@ -51,25 +68,77 @@ SHORT_ID_LENGTH: Final[int] = 16
 _HEX: Final[frozenset[str]] = frozenset("0123456789abcdef")
 
 
+def _no_form(where: str, value: Any, why: str) -> TypeError:
+    """The refusal for a value with no declared canonical form: never a ``str()`` fallback."""
+    return TypeError(
+        f"cannot hash {where}: {why} (type {type(value).__name__}). "
+        "Convert it in the caller so the identity says what it means."
+    )
+
+
+def _canonical(value: Any, *, where: str = "payload") -> Any:
+    """*value* as JSON-native data under the one declared encoder, or a refusal naming *where* it sits."""
+    # Enum first: a ``StrEnum``/``IntEnum`` member is also a str/int, and the canonical form of an enum is its
+    # declared value, not the member.
+    if isinstance(value, Enum):
+        return _canonical(value.value, where=f"{where}(enum)")
+    if value is None or isinstance(value, str):
+        return value
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError(f"cannot hash {where}: non-finite floats have no JSON form (type float)")
+        return 0.0 if value == 0.0 else value
+    if isinstance(value, BaseModel):
+        return _canonical(value.model_dump(), where=where)
+    if isinstance(value, PurePath):
+        return str(value)
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            raise _no_form(where, value, "a naive datetime names no instant")
+        return value.isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, set | frozenset):
+        raise _no_form(where, value, "a set has no canonical order; pass a sorted list")
+    if isinstance(value, bytes | bytearray | memoryview):
+        raise _no_form(where, value, "bytes have no canonical JSON form; pass a digest or a str")
+    if isinstance(value, Mapping):
+        encoded: dict[str, Any] = {}
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise _no_form(f"{where}[{key!r}]", key, "mapping keys must be str")
+            encoded[key] = _canonical(item, where=f"{where}.{key}")
+        return encoded
+    if isinstance(value, Sequence):
+        return [_canonical(item, where=f"{where}[{index}]") for index, item in enumerate(value)]
+    raise _no_form(where, value, "no declared canonical form")
+
+
 def canonical_bytes(payload: Any) -> bytes:
-    """The exact bytes every digest in this library is taken over: sorted keys, no whitespace, UTF-8.
+    """The exact bytes every digest in this library is taken over: one encoder, sorted keys, no whitespace, UTF-8.
 
     Args:
-        payload: JSON-native data: ``str``, ``int``, ``float``, ``bool``, ``None``, a list or tuple, or a mapping
-            whose keys are ``str``. A pydantic model is not serialised here: pass ``model_dump()`` (the caller
-            decides the encoder, and ``roles.identity_of`` already returns JSON-native data).
+        payload: The data to encode: JSON-native data (``str``, ``int``, ``float``, ``bool``, ``None``, a list or
+            tuple, a mapping with ``str`` keys), or a value with a declared encoding (:func:`_canonical`): an
+            ``Enum`` member, a ``Path``, a pydantic model, an aware ``datetime`` or a ``date``.
 
     Returns:
-        The canonical UTF-8 bytes of *payload*.
+        The canonical UTF-8 bytes of *payload*: ``-0.0`` written as ``0.0``, a ``Path`` as its string, an ``Enum``
+        member as its declared value.
 
     Raises:
-        TypeError: a value has no JSON form (an arbitrary object, a ``set``, ``bytes``). There is no ``default=``
-            fallback: ``str(value)`` would put a repr in a digest.
+        TypeError: a value has no declared canonical form (an arbitrary object, a ``set``, ``bytes``, a mapping
+            key that is not a ``str``, a naive ``datetime``). There is no ``default=`` fallback: ``str(value)``
+            would put a repr in a digest.
         ValueError: a float is ``NaN`` or infinite, which JSON has no form for and ``NaN != NaN`` would make an
             identity that never matches itself.
     """
     return json.dumps(
-        payload,
+        _canonical(payload),
         sort_keys=True,
         separators=(",", ":"),
         ensure_ascii=False,
