@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import pytest
-from configkit.faults import Fault
+from configkit.faults import Fault, ValueErrorFault
 from configkit.plugins import (
     Provider,
     Registration,
@@ -182,7 +182,7 @@ def test_register_refuses_a_target_that_names_no_attribute() -> None:
 
 def test_a_registration_refuses_a_target_without_an_attribute() -> None:
     """``module:attribute`` is the one target grammar an entry point and a document both use."""
-    with pytest.raises(ValueError) as raised:
+    with pytest.raises(ValueErrorFault) as raised:
         Registration(name="brand", target="configkit.spec")
     assert "configkit.spec" in str(raised.value)
 

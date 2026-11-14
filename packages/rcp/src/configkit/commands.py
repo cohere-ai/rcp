@@ -191,11 +191,11 @@ class Command:
         """Refuse a malformed declaration: a blank name, a non-model request or result, a non-callable field.
 
         Raises:
-            ValueError: the name is blank.
+            Fault: the name is blank (``code`` is ``value_error``).
             TypeError: ``request`` or ``result`` is not a pydantic model class, or a callable field is not callable.
         """
         if not isinstance(self.name, str) or not self.name.strip():
-            raise ValueError(f"a Command needs a non-empty name, got {self.name!r}")
+            raise ValueErrorFault(f"a Command needs a non-empty name, got {self.name!r}")
         if not (isinstance(self.request, type) and issubclass(self.request, BaseModel)):
             raise TypeError(f"{self.name}: request must be a pydantic model class, got {self.request!r}")
         if self.result is not None and not (isinstance(self.result, type) and issubclass(self.result, BaseModel)):
@@ -250,13 +250,13 @@ class Step:
         """Refuse a step that cannot be reported on or called.
 
         Raises:
-            ValueError: ``name`` or ``field`` is blank.
+            Fault: ``name`` or ``field`` is blank (``code`` is ``value_error``).
             TypeError: ``run`` is not callable.
         """
         if not self.name.strip():
-            raise ValueError("a Step needs a non-empty name")
+            raise ValueErrorFault("a Step needs a non-empty name")
         if not self.field.strip():
-            raise ValueError(f"step {self.name!r} needs a non-empty field")
+            raise ValueErrorFault(f"step {self.name!r} needs a non-empty field")
         if not callable(self.run):
             raise TypeError(f"step {self.name!r}: run must be callable, got {self.run!r}")
 
@@ -329,7 +329,8 @@ def index(verbs: Sequence[Command]) -> tuple[str, ...]:
         The names, unchanged and in order.
 
     Raises:
-        ValueError: a name is declared twice. A second declaration would silently be the one that runs.
+        Fault: a name is declared twice (``code`` is ``value_error``). A second declaration would
+            silently be the one that runs.
     """
     names = tuple(verb.name for verb in verbs)
     seen: set[str] = set()
@@ -339,7 +340,7 @@ def index(verbs: Sequence[Command]) -> tuple[str, ...]:
             duplicates.append(name)
         seen.add(name)
     if duplicates:
-        raise ValueError(f"verb(s) declared twice: {', '.join(duplicates)}; a name names one command")
+        raise ValueErrorFault(f"verb(s) declared twice: {', '.join(duplicates)}; a name names one command")
     return names
 
 
@@ -372,7 +373,7 @@ def describe(verbs: Sequence[Command]) -> CommandTree:
         The tree. A verb's earlier words are its groups, so ``"run list"`` makes ``"run"`` a parent of it.
 
     Raises:
-        ValueError: a name is declared twice.
+        Fault: a name is declared twice (``code`` is ``value_error``).
     """
     paths = index(verbs)
     options: dict[str, tuple[OptionSpec, ...]] = {}
@@ -591,7 +592,7 @@ def build_parser(
         than exiting, so a usage error is reported like any other refusal.
 
     Raises:
-        ValueError: a verb is declared twice.
+        Fault: a verb is declared twice (``code`` is ``value_error``).
         Fault: a request field's flag is one the root parser already declares.
         TypeError: a request field has no one-flag form.
     """
@@ -629,11 +630,12 @@ def customise(command: Command, option: str, help_at_print_time: Callable[[], st
         A new :class:`Command`; *command* is unchanged.
 
     Raises:
-        ValueError: *option* is not a flag the request declares. The message names the declared flags.
+        Fault: *option* is not a flag the request declares (``code`` is ``value_error``). The message names
+            the declared flags.
     """
     declared = [spec.name for spec in option_specs(command.request)]
     if option not in declared:
-        raise ValueError(f"{command.name}: {option} is not a declared option; declared: {', '.join(declared)}")
+        raise ValueErrorFault(f"{command.name}: {option} is not a declared option; declared: {', '.join(declared)}")
     previous = command.add_arguments
 
     def add_arguments(parser: Any) -> None:

@@ -21,6 +21,8 @@ from types import MappingProxyType
 
 from pydantic import BaseModel, ConfigDict
 
+from configkit.faults import ValueErrorFault
+
 __all__ = [
     "SchemaTagged",
     "DocumentId",
@@ -66,24 +68,25 @@ class DocumentId:
         """Refuse a declaration nobody made: a blank name, one string, no ids, a repeated id, or a bad removable id.
 
         Raises:
-            ValueError: the record is malformed. The message names the field and the value.
+            Fault: the record is malformed (``code`` is ``value_error``). The message names the field
+                and the value.
         """
         if not isinstance(self.name, str) or not self.name.strip():
-            raise ValueError(f"a DocumentId needs a non-empty name, got {self.name!r}")
+            raise ValueErrorFault(f"a DocumentId needs a non-empty name, got {self.name!r}")
         if isinstance(self.accepted_ids, str):
-            raise ValueError(
+            raise ValueErrorFault(
                 f"{self.name}: accepted_ids is a sequence of schema ids, not the string {self.accepted_ids!r}; "
                 "a string is read one character at a time"
             )
         ids = tuple(self.accepted_ids)
         if not ids:
-            raise ValueError(f"{self.name}: a DocumentId needs at least one accepted schema id")
+            raise ValueErrorFault(f"{self.name}: a DocumentId needs at least one accepted schema id")
         if any(not isinstance(spelling, str) or not spelling for spelling in ids):
-            raise ValueError(f"{self.name}: every accepted schema id must be a non-empty string, got {ids!r}")
+            raise ValueErrorFault(f"{self.name}: every accepted schema id must be a non-empty string, got {ids!r}")
         if len(set(ids)) != len(ids):
-            raise ValueError(f"{self.name}: accepted schema ids declared twice: {ids!r}")
+            raise ValueErrorFault(f"{self.name}: accepted schema ids declared twice: {ids!r}")
         if self.removable not in ids:
-            raise ValueError(
+            raise ValueErrorFault(
                 f"{self.name}: the removable spelling {self.removable!r} is not one of the accepted ids {ids!r}; "
                 "a consumer can only delete a spelling a reader accepts"
             )
@@ -183,18 +186,18 @@ def registry(documents: Iterable[DocumentId]) -> SchemaRegistry:
         The read-only :class:`SchemaRegistry`; the caller's iterable is not kept.
 
     Raises:
-        ValueError: two records share a name, or one accepted spelling names two documents. Either would make a
-            reader's answer depend on the order it was handed the records.
+        Fault: two records share a name, or one accepted spelling names two documents (``code`` is
+            ``value_error``). Either would make a reader's answer depend on the order it was handed the records.
     """
     by_name: dict[str, DocumentId] = {}
     by_id: dict[str, DocumentId] = {}
     for document in documents:
         if document.name in by_name:
-            raise ValueError(f"document {document.name!r} is declared twice; a name names one document")
+            raise ValueErrorFault(f"document {document.name!r} is declared twice; a name names one document")
         for spelling in accepted_schema_ids(document):
             claimed = by_id.get(spelling)
             if claimed is not None:
-                raise ValueError(
+                raise ValueErrorFault(
                     f"schema id {spelling!r} is claimed by {claimed.name!r} and {document.name!r}; "
                     "a spelling names one document"
                 )

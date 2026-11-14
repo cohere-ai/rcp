@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import pytest
 from configkit import schemas
+from configkit.faults import ValueErrorFault
 from configkit.schemas import (
     ArtifactHome,
     DocumentId,
@@ -49,7 +50,7 @@ def test_the_removable_spelling_is_named_and_accepted() -> None:
 
 def test_a_record_whose_removable_spelling_is_not_accepted_is_refused() -> None:
     """A removable spelling nobody accepts is a declaration error, not a no-op."""
-    with pytest.raises(ValueError, match="removable"):
+    with pytest.raises(ValueErrorFault, match="removable"):
         DocumentId(name="x", accepted_ids=("rcp.x.v1",), removable="rcp-ndcg.x.v1")
 
 
@@ -59,19 +60,19 @@ def test_a_record_whose_removable_spelling_is_not_accepted_is_refused() -> None:
 )
 def test_a_malformed_record_is_refused(accepted: tuple[str, ...], removable: str) -> None:
     """No ids, a repeated id, or no removable spelling: each is a declaration nobody made."""
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueErrorFault):
         DocumentId(name="x", accepted_ids=accepted, removable=removable)
 
 
 def test_an_empty_name_is_refused() -> None:
     """The name is what ``home_of`` derives the artifact's home from, so it cannot be blank."""
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueErrorFault):
         DocumentId(name=" ", accepted_ids=("rcp.x.v1",), removable="rcp.x.v1")
 
 
 def test_accepted_ids_declared_as_one_string_is_refused_naming_the_field() -> None:
     """H12: ``tuple("rcp.x.v1")`` exploded into characters, and the refusal named neither the field nor the cause."""
-    with pytest.raises(ValueError) as raised:
+    with pytest.raises(ValueErrorFault) as raised:
         DocumentId(name="x", accepted_ids="rcp.x.v1", removable="rcp.x.v1")  # type: ignore[arg-type]
     assert "accepted_ids" in str(raised.value)
     assert "rcp.x.v1" in str(raised.value)
@@ -103,14 +104,14 @@ def test_registry_indexes_every_spelling() -> None:
 def test_registry_refuses_two_documents_claiming_one_spelling() -> None:
     """A spelling names one document: two records for one id would make a reader's answer order-dependent."""
     twin = DocumentId(name="twin", accepted_ids=("rcp.result-record.v1",), removable="rcp.result-record.v1")
-    with pytest.raises(ValueError, match="rcp.result-record.v1"):
+    with pytest.raises(ValueErrorFault, match="rcp.result-record.v1"):
         registry([RESULT_RECORD, twin])
 
 
 def test_registry_refuses_two_documents_with_one_name() -> None:
     """The name keys the registry, so two records with one name are one document declared twice."""
     twin = DocumentId(name="result-record", accepted_ids=("rcp.other.v1",), removable="rcp.other.v1")
-    with pytest.raises(ValueError, match="result-record"):
+    with pytest.raises(ValueErrorFault, match="result-record"):
         registry([RESULT_RECORD, twin])
 
 

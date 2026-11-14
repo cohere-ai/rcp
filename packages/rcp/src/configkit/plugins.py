@@ -101,13 +101,14 @@ class Registration:
         """Refuse a blank name or a target that is not ``module:attribute``.
 
         Raises:
-            ValueError: the name is blank, or the target has no ``:`` or an empty half.
+            Fault: the name is blank, or the target has no ``:`` or an empty half (``code`` is
+                ``value_error``).
         """
         if not isinstance(self.name, str) or not self.name.strip():
-            raise ValueError(f"a Registration needs a non-empty name, got {self.name!r}")
+            raise ValueErrorFault(f"a Registration needs a non-empty name, got {self.name!r}")
         module, separator, attribute = self.target.partition(":") if isinstance(self.target, str) else ("", "", "")
         if not separator or not module.strip() or not attribute.strip():
-            raise ValueError(
+            raise ValueErrorFault(
                 f"{self.name}: a target is '<module>:<attribute>', got {self.target!r}; "
                 "the colon is what separates the import name from the attribute"
             )

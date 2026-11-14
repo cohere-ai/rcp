@@ -141,19 +141,19 @@ def register_fault_codes(
         The consumer's rows, then :data:`FAULT_CODES`.
 
     Raises:
-        ValueError: a code appears twice (in the consumer's rows or in a generic row), or is empty.
+        ValueErrorFault: a code appears twice (in the consumer's rows or in a generic row), or is empty.
     """
     table = tuple(rows) + FAULT_CODES
     seen: set[str] = set()
     duplicates: list[str] = []
     for _, code in table:
         if not code:
-            raise ValueError("a fault code must be a non-empty string")
+            raise ValueErrorFault("a fault code must be a non-empty string")
         if code in seen and code not in duplicates:
             duplicates.append(code)
         seen.add(code)
     if duplicates:
-        raise ValueError(f"fault code(s) declared twice: {', '.join(duplicates)}; a code names one fault")
+        raise ValueErrorFault(f"fault code(s) declared twice: {', '.join(duplicates)}; a code names one fault")
     return table
 
 
@@ -187,14 +187,14 @@ def exit_codes(rows: Mapping[str, int]) -> ExitCodeTable:
         A new read-only mapping; the caller's ``rows`` is not kept.
 
     Raises:
-        ValueError: a code is not a non-empty string, or a value is not an ``int``.
+        ValueErrorFault: a code is not a non-empty string, or a value is not an ``int``.
     """
     checked: dict[str, int] = {}
     for code, number in rows.items():
         if not isinstance(code, str) or not code:
-            raise ValueError(f"an exit-code table is keyed by a non-empty fault code, not {code!r}")
+            raise ValueErrorFault(f"an exit-code table is keyed by a non-empty fault code, not {code!r}")
         if not isinstance(number, int) or isinstance(number, bool):
-            raise ValueError(f"the exit code of {code!r} is not an int: {number!r}")
+            raise ValueErrorFault(f"the exit code of {code!r} is not an int: {number!r}")
         checked[code] = number
     return MappingProxyType(checked)
 
@@ -263,14 +263,15 @@ def warn(record: BaseModel, code: str, **fields: Any) -> None:
         **fields: The warning's facts, merged over the record's own dump; JSON-serialisable.
 
     Raises:
-        ValueError: the record declares no ``WARNING_CODES``, or *code* is not one of them.
+        ValueErrorFault: the record declares no ``WARNING_CODES``, or *code* is not one of them.
     """
     declared = _declared_warning_codes(record)
     if not declared:
-        raise ValueError(
+        raise ValueErrorFault(
             f"{type(record).__name__} carries a warning channel but declares no {WARNING_CODES}; "
             "declare the closed set of codes it may emit"
         )
     if code not in declared:
-        raise ValueError(f"unknown warning code {code!r} for {type(record).__name__}; known: {', '.join(declared)}")
+        known = ", ".join(declared)
+        raise ValueErrorFault(f"unknown warning code {code!r} for {type(record).__name__}; known: {known}")
     warnings.warn(_Warning(code, str(record), {**record.model_dump(), **fields}), stacklevel=2)

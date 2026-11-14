@@ -32,7 +32,7 @@ from configkit.commands import (
     run_steps,
     tool,
 )
-from configkit.faults import Fault, exit_codes
+from configkit.faults import Fault, ValueErrorFault, exit_codes
 from configkit.spec import Brand
 from pydantic import BaseModel, Field
 
@@ -284,7 +284,7 @@ def test_customise_evaluates_the_help_when_it_prints() -> None:
 
 def test_customise_refuses_an_option_the_request_does_not_declare() -> None:
     """A post-declaration hook on a flag nobody declared is a typo, and it names the flags that exist."""
-    with pytest.raises(ValueError, match="--mod"):
+    with pytest.raises(ValueErrorFault, match="--mod"):
         customise(_command(), "--mod", lambda: "x")
 
 
@@ -305,7 +305,7 @@ def test_index_and_describe() -> None:
 
 def test_index_refuses_a_duplicate_verb() -> None:
     """A verb name names one command: a second declaration of it would be the one that wins, silently."""
-    with pytest.raises(ValueError, match="run list"):
+    with pytest.raises(ValueErrorFault, match="run list"):
         index([_command(), _command()])
 
 
@@ -352,9 +352,9 @@ def test_run_steps_continues_when_asked_and_skips_a_none_step() -> None:
 
 def test_run_steps_refuses_a_malformed_step() -> None:
     """A step with no name or no field cannot be reported on, so it is refused at declaration."""
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueErrorFault):
         Step("", "field", lambda values: 1)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueErrorFault):
         Step("name", "", lambda values: 1)
     with pytest.raises(TypeError):
         Step("name", "field", "not callable")  # type: ignore[arg-type]
@@ -388,7 +388,7 @@ def test_verb_is_command() -> None:
 
 def test_command_refuses_a_malformed_declaration() -> None:
     """A command with no name, a non-model request or a non-callable run is a declaration error."""
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueErrorFault):
         Command(name=" ", request=_Empty, result=None, run=_list)
     with pytest.raises(TypeError):
         Command(name="x", request=dict, result=None, run=_list)  # type: ignore[arg-type]

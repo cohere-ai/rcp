@@ -16,6 +16,7 @@ import pytest
 from configkit.faults import (
     FAULT_CODES,
     Fault,
+    ValueErrorFault,
     classify,
     exit_codes,
     register_fault_codes,
@@ -66,9 +67,9 @@ def test_every_subclass_is_in_the_table() -> None:
 
 def test_a_duplicated_code_is_refused() -> None:
     """D1: a code declared twice names two faults, so the table refuses it."""
-    with pytest.raises(ValueError, match="declared twice"):
+    with pytest.raises(ValueErrorFault, match="declared twice"):
         register_fault_codes([(KeyError, "value_error")])
-    with pytest.raises(ValueError, match="declared twice"):
+    with pytest.raises(ValueErrorFault, match="declared twice"):
         register_fault_codes([(KeyError, "config_invalid"), (LookupError, "config_invalid")])
 
 
@@ -94,7 +95,7 @@ def test_exit_codes_are_the_consumers_integers() -> None:
     table = exit_codes({"value_error": 3, "os_error": 4})
     assert table["value_error"] == 3
     assert table.get("missing", None) is None
-    with pytest.raises(ValueError, match="not an int"):
+    with pytest.raises(ValueErrorFault, match="not an int"):
         exit_codes({"value_error": "3"})
 
 
@@ -150,9 +151,9 @@ def test_warn_emits_one_warning_keyed_by_the_records_code() -> None:
 
 def test_warn_refuses_a_code_outside_the_records_set() -> None:
     """rcp-31: the set is the record's, so an undeclared code is refused here and not at the consumer."""
-    with pytest.raises(ValueError, match="UNPINNED_REVISION"):
+    with pytest.raises(ValueErrorFault, match="UNPINNED_REVISION"):
         warn(_Noticed(model="m", revision="main"), "OTHER")
-    with pytest.raises(ValueError, match="WARNING_CODES"):
+    with pytest.raises(ValueErrorFault, match="WARNING_CODES"):
         warn(_Silent(model="m"), "UNPINNED_REVISION")
 
 
@@ -163,3 +164,31 @@ def test_the_facade_publishes_every_fault_class() -> None:
     assert set(faults.__all__) <= set(configkit.__all__)
     for name in faults.__all__:
         assert getattr(configkit, name) is getattr(faults, name)
+
+
+def test_every_public_door_raises_the_one_fault() -> None:
+    """H9: a bare ``ValueError`` is what the product's ``classify`` reports as an unexpected failure (exit 1).
+
+    Five modules refused a declaration with one, against this module's own rule ("every deliberate refusal in the
+    library is a :class:`Fault` ... a caller catches this once"). Each door now raises the fault the consumer's
+    code table knows.
+    """
+    from configkit.commands import Command, Step, customise, index
+    from configkit.plugins import Registration
+    from configkit.schemas import DocumentId
+
+    class _Empty(BaseModel):
+        """A request model with no field."""
+
+    command = Command(name="run list", request=_Empty, result=None, run=lambda request: _Empty())
+    doors = (
+        lambda: DocumentId(name=" ", accepted_ids=("p.x.v1",), removable="p.x.v1"),
+        lambda: Registration(name=" ", target="acme.plugin:a"),
+        lambda: Command(name=" ", request=_Empty, result=None, run=lambda request: _Empty()),
+        lambda: Step("", "field", lambda values: 1),
+        lambda: index([command, command]),
+        lambda: customise(command, "--nope", lambda: "x"),
+    )
+    for door in doors:
+        with pytest.raises(ValueErrorFault):
+            door()
