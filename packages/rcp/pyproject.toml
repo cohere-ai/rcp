@@ -179,7 +179,9 @@ where = ["src"]
 # (`rcp schema export` writes them byte for byte), so the wheel carries them as models.
 
 [tool.setuptools.package-data]
-"*" = ["*.txt", "*.yaml"]
+# ``py.typed`` travels with the wheel's packages, so a type checker reads ``configkit``'s inline types (the
+# library ships no separate stubs); the wildcard covers ``configkit`` and every ``rcp`` subpackage.
+"*" = ["*.txt", "*.yaml", "py.typed"]
 "rcp.examples" = ["tiny/*.jsonl", "tiny/*.json", "runs/*.yaml"]
 
 # The repository is a uv workspace with four members: this manifest (the

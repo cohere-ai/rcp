@@ -1,0 +1,221 @@
+"""The isolation proof (A1): the library imports nothing of the product it ships in.
+
+``configkit`` lives in the ``cohere-rcp`` wheel, so the only thing that makes a future move to another
+distribution a directory move is a rule the tree cannot break silently: the library imports no module of
+``rcp``, ``rcp_core`` or ``rcp_vllm``, uses no relative import (a relative import is a seam that would not
+survive the move), and reaches no product module through a string-literal import either. The first half of
+this module parses every file of the package with :mod:`ast`, at every scope, and fails on a finding; the
+second half proves the same rule at run time, in a subprocess, and from an extracted copy of the package.
+
+A check whose control cannot fail is not shipped (the contract's §11), so each leg carries a control: a copy
+of the package in ``tmp_path`` with one bad line appended must produce exactly one finding.
+"""
+
+from __future__ import annotations
+
+import ast
+import json
+import os
+import shutil
+import subprocess
+import sys
+from collections.abc import Iterator
+from pathlib import Path
+
+import pytest
+
+#: ``packages/rcp/src/configkit``: the package under test, and the directory a finding is relative to.
+PACKAGE = Path(__file__).resolve().parents[2] / "src/configkit"
+
+#: The top-level packages the library must never import: the product it ships in, its core and the serving half.
+FORBIDDEN_ROOTS = frozenset({"rcp", "rcp_core", "rcp_vllm"})
+
+#: The only non-stdlib modules an import of the library may load: the ``pydantic`` closure (C1).
+PURITY_ROOTS = frozenset({"pydantic", "pydantic_core", "typing_extensions", "typing_inspection"})
+
+#: The functions whose first string argument names a module to load.
+_IMPORT_CALLS = frozenset({"__import__", "import_module", "find_spec"})
+
+#: The ``pkgutil`` calls that walk a directory of modules; a string argument naming a product path is a finding.
+_WALK_CALLS = frozenset({"walk_packages", "iter_modules", "get_importer"})
+
+
+def _callee(node: ast.expr) -> str:
+    """The name an import call is made by: ``import_module`` for ``importlib.import_module`` and for the bare name."""
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    if isinstance(node, ast.Name):
+        return node.id
+    return ""
+
+
+def _owner(node: ast.expr) -> str:
+    """The name the receiver of a call is bound to (``pkgutil`` for ``pkgutil.walk_packages``), or ``""``."""
+    if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+        return node.value.id
+    return ""
+
+
+def _root(dotted: str) -> str:
+    """The top-level part of a dotted module name."""
+    return dotted.split(".", 1)[0]
+
+
+def _dynamic_target(node: ast.Call) -> str | None:
+    """The product module *node* loads through a string literal, if it does.
+
+    The three forms the package could use are read by their call name: ``__import__("rcp…")``,
+    ``importlib.import_module("rcp…")``/``find_spec("rcp…")``, and a ``pkgutil`` walk whose path names a
+    product directory. A docstring that mentions ``rcp`` is not a call and is not a finding.
+    """
+    name = _callee(node.func)
+    if name in _IMPORT_CALLS:
+        first = node.args[0] if node.args else None
+        if isinstance(first, ast.Constant) and isinstance(first.value, str) and _root(first.value) in FORBIDDEN_ROOTS:
+            return first.value
+    if name in _WALK_CALLS and _owner(node.func) == "pkgutil":
+        for argument in node.args:
+            for literal in _string_constants(argument):
+                if any(part in FORBIDDEN_ROOTS for part in Path(literal).parts):
+                    return literal
+    return None
+
+
+def _string_constants(node: ast.expr) -> Iterator[str]:
+    """Every string constant *node* is, or contains in a list, tuple or set."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        yield node.value
+    elif isinstance(node, ast.List | ast.Tuple | ast.Set):
+        for element in node.elts:
+            yield from _string_constants(element)
+
+
+def _findings(relative: Path, node: ast.AST) -> Iterator[str]:
+    """The isolation findings of one syntax-tree node, as ``"<file>:<line>: <target>"``."""
+    target: str | None = None
+    if isinstance(node, ast.Import):
+        for alias in node.names:
+            if _root(alias.name) in FORBIDDEN_ROOTS:
+                target = alias.name
+    elif isinstance(node, ast.ImportFrom):
+        if node.level:
+            target = "." * node.level + (node.module or "")
+        elif node.module is not None and _root(node.module) in FORBIDDEN_ROOTS:
+            target = node.module
+    elif isinstance(node, ast.Call):
+        target = _dynamic_target(node)
+    if target is not None:
+        yield f"{relative}:{node.lineno}: {target}"
+
+
+def scan_package(root: Path) -> list[str]:
+    """Every isolation finding under *root*, in file order, as ``"<file>:<line>: <target>"``.
+
+    The scan walks the whole syntax tree, so a module-, class-, function- or ``if TYPE_CHECKING``-scoped
+    import is found alike. ``<file>`` is relative to *root*, which keeps a control's findings readable.
+
+    Args:
+        root: The package directory to scan (the real package, or a copy of it).
+
+    Returns:
+        The findings; an empty list is the proof.
+    """
+    findings: list[str] = []
+    for path in sorted(root.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            findings.extend(_findings(path.relative_to(root), node))
+    return findings
+
+
+def _run(code: str, *, cwd: Path, pythonpath: Path | None = None) -> subprocess.CompletedProcess[str]:
+    """Run *code* in the project interpreter with *cwd* outside the checkout.
+
+    The ambient ``PYTHONPATH`` is dropped (it could put the checkout's ``src`` first and hide a product import),
+    and the interpreter is ``sys.executable``: the venv ``uv run --no-sync`` selected, whose site-packages
+    carries the editable install this test's package is imported from.
+    """
+    env = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
+    if pythonpath is not None:
+        env["PYTHONPATH"] = str(pythonpath)
+    return subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, cwd=cwd, env=env, check=False)
+
+
+def _payload(result: subprocess.CompletedProcess[str]) -> dict[str, object]:
+    """The JSON line a probe printed last, after asserting the probe itself succeeded."""
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout.strip().splitlines()[-1])
+
+
+#: P2: what an ``import configkit`` put in ``sys.modules``, and the file it imported.
+_RUNTIME_PROBE = """
+import json, sys
+import configkit
+product = sorted({name.split(".")[0] for name in sys.modules} & {"rcp", "rcp_core", "rcp_vllm"})
+print(json.dumps({"file": configkit.__file__, "product": product}))
+"""
+
+#: P4: the same import from an extracted copy, plus the non-stdlib roots the import closed over.
+_EXTRACTION_PROBE = """
+import json, pathlib, sys
+import configkit
+allowed = set(sys.stdlib_module_names) | {"configkit", "__main__"}
+roots = sorted({name.split(".")[0] for name in sys.modules
+                if name.split(".")[0] not in allowed and not name.startswith("_")})
+print(json.dumps({"file": str(pathlib.Path(configkit.__file__ or "")), "roots": roots}))
+"""
+
+
+def test_the_package_is_where_the_scan_looks() -> None:
+    """A scan of a missing directory finds nothing, so the directory is asserted before it is trusted."""
+    assert PACKAGE.is_dir(), PACKAGE
+    assert (PACKAGE / "__init__.py").is_file(), PACKAGE
+
+
+def test_no_product_import_at_any_scope() -> None:
+    """A1: every file of the package imports the standard library and ``pydantic`` only."""
+    assert scan_package(PACKAGE) == []
+
+
+@pytest.mark.parametrize(
+    ("injected", "target"),
+    [
+        ("import rcp", "rcp"),
+        ("from rcp.errors import Fault", "rcp.errors"),
+        ("from rcp_core.schemas import accepted_schema_ids", "rcp_core.schemas"),
+        ("from . import faults", "."),
+        ('import importlib\nimportlib.import_module("rcp.errors")', "rcp.errors"),
+        ('import pkgutil\npkgutil.walk_packages(["vendor/rcp"])', "vendor/rcp"),
+    ],
+)
+def test_the_scan_finds_an_injected_import(tmp_path: Path, injected: str, target: str) -> None:
+    """The control: one bad line appended to a copy of the package produces exactly one finding."""
+    copy = tmp_path / "configkit"
+    shutil.copytree(PACKAGE, copy, ignore=shutil.ignore_patterns("__pycache__"))
+    init = copy / "__init__.py"
+    init.write_text(init.read_text(encoding="utf-8") + f"\n{injected}\n", encoding="utf-8")
+    findings = scan_package(copy)
+    assert len(findings) == 1, findings
+    assert findings[0].endswith(f": {target}"), findings[0]
+
+
+def test_importing_the_library_loads_no_product_module(tmp_path: Path) -> None:
+    """P2: ``import configkit`` loads no ``rcp``, ``rcp_core`` or ``rcp_vllm`` module, from outside the checkout."""
+    payload = _payload(_run(_RUNTIME_PROBE, cwd=tmp_path))
+    assert payload["product"] == []
+    assert Path(str(payload["file"])).resolve() == (PACKAGE / "__init__.py").resolve()
+
+
+def test_a_copy_of_the_package_imports_with_the_pydantic_closure(tmp_path: Path) -> None:
+    """P4: the package extracted to another directory imports with no edit, and imports nothing else.
+
+    The copy is ``src/configkit``, not the distribution directory: a namespace package would import with
+    ``__file__ is None`` and prove nothing, so the path is asserted to be the copy's own ``__init__.py``.
+    """
+    copy = tmp_path / "configkit"
+    shutil.copytree(PACKAGE, copy, ignore=shutil.ignore_patterns("__pycache__"))
+    payload = _payload(_run(_EXTRACTION_PROBE, cwd=tmp_path, pythonpath=tmp_path))
+    extracted = Path(str(payload["file"]))
+    assert extracted.name == "__init__.py", payload["file"]
+    assert extracted.parent == copy, payload["file"]
+    assert set(payload["roots"]) <= PURITY_ROOTS, payload["roots"]

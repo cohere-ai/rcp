@@ -75,6 +75,15 @@ share (`check_judge_overlap`'s shipped default, 1). `rcp_core.irt._calibration` 
 `JudgeOverlapError` -- the refusal that check raises, already re-exported -- in its own `__all__`. Additive: no
 name moves and no number changes.
 
+### Internal
+
+The wheel gains an internal package, `configkit`, at `packages/rcp/src/configkit/`: the shared configuration
+and command-line library the product, `emb-train` and `emb-eval` are to consume. It is not a public surface --
+it is not in `rcp.support.api_docs.PUBLIC_MODULES`, so no name is added to `tests/contract/snapshots/` -- and
+it imports the standard library and `pydantic` only: no `rcp`, `rcp_core` or `rcp_vllm` module, no YAML reader
+at import time, and no file or environment read at import time. `packages/rcp/tests/configkit/test_isolation.py`
+scans every file of the package and proves the same rule at run time from an extracted copy.
+
 ### Dependencies
 
 The lock carries the windows the shipped engine release (`vllm` `v0.33.0`, the tag the serving image is built
