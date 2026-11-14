@@ -1,12 +1,15 @@
 """Redacting URLs for anything that leaves the process: a log line, an error message, a record.
 
-The one redactor of the package (the support layer, so every layer above can use it): :func:`safe_url` for
-one URL, :func:`redact_urls` for free text that may carry some (an exception's message).
+The product's typed doors onto the library's one rule: :func:`safe_url` for one URL (delegating to
+:func:`configkit.roles.safe_url`), :func:`redact_urls` for free text that may carry some (an exception's
+message).
 """
 
 from __future__ import annotations
 
 import re
+
+from configkit import roles
 
 
 def safe_url(url: str) -> str:
@@ -15,8 +18,9 @@ def safe_url(url: str) -> str:
     A user may embed credentials in a URL (a documented httpx idiom, ``http://user:key@host``), and a query
     string or a fragment can carry a key too; none of them reaches a log line, an exception message or a run
     manifest (the request itself still uses the full URL). The authority and the path stay as written -- a
-    bucket name is case-sensitive and an IPv6 host keeps its brackets. The one redactor: the storage cache's
-    messages and the inference layer's logs, errors and engine records all call it.
+    bucket name is case-sensitive and an IPv6 host keeps its brackets. The rule is
+    :func:`configkit.roles.safe_url`'s, and the recorded form reads the same one once ``roles.redact`` is wired
+    in: the product holds no second body of it.
 
     Args:
         url: A URL or storage URI; a string without ``://`` (a local path) is returned unchanged.
@@ -24,13 +28,7 @@ def safe_url(url: str) -> str:
     Returns:
         ``<scheme>://<host[:port]>[/<path>]``.
     """
-    scheme, separator, rest = url.partition("://")
-    if not separator:
-        return url  # not an authority-bearing URL: nothing to strip
-    rest = rest.partition("#")[0].partition("?")[0]
-    authority, _, path = rest.partition("/")
-    authority = authority[authority.rfind("@") + 1 :]
-    return f"{scheme}://{authority}/{path}" if path else f"{scheme}://{authority}"
+    return roles.safe_url(url)
 
 
 #: A URL inside free text (an exception's message): a scheme, ``://``, then everything up to whitespace, a
