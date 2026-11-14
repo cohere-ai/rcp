@@ -72,9 +72,9 @@ def test_the_canonical_form_is_sorted_compact_utf8_and_refuses_nan() -> None:
     """The four dump parameters, each observable: key order, no whitespace, UTF-8 text, no NaN."""
     assert canonical_bytes({"b": 1, "a": 2}) == b'{"a":2,"b":1}'
     assert canonical_bytes({"name": "café"}) == '{"name":"café"}'.encode()
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueErrorFault):
         canonical_bytes({"x": float("nan")})
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueErrorFault):
         canonical_bytes({"x": float("inf")})
 
 

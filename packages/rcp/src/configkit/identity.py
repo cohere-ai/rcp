@@ -92,7 +92,7 @@ def _canonical(value: Any, *, where: str = "payload") -> Any:
         return value
     if isinstance(value, float):
         if not math.isfinite(value):
-            raise ValueError(f"cannot hash {where}: non-finite floats have no JSON form (type float)")
+            raise ValueErrorFault(f"cannot hash {where}: non-finite floats have no JSON form (type float)")
         return 0.0 if value == 0.0 else value
     if isinstance(value, BaseModel):
         return _canonical(value.model_dump(), where=where)
@@ -136,8 +136,8 @@ def canonical_bytes(payload: Any) -> bytes:
         TypeError: a value has no declared canonical form (an arbitrary object, a ``set``, ``bytes``, a mapping
             key that is not a ``str``, a naive ``datetime``). There is no ``default=`` fallback: ``str(value)``
             would put a repr in a digest.
-        ValueError: a float is ``NaN`` or infinite, which JSON has no form for and ``NaN != NaN`` would make an
-            identity that never matches itself.
+        ValueErrorFault: a float is ``NaN`` or infinite, which JSON has no form for and ``NaN != NaN`` would
+            make an identity that never matches itself.
     """
     return json.dumps(
         _canonical(payload),
@@ -159,7 +159,7 @@ def hash_payload(payload: Any) -> str:
 
     Raises:
         TypeError: a value has no JSON form.
-        ValueError: a float is ``NaN`` or infinite.
+        ValueErrorFault: a float is ``NaN`` or infinite.
     """
     return hashlib.sha256(canonical_bytes(payload)).hexdigest()
 

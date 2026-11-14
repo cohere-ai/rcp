@@ -14,6 +14,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from configkit.faults import ValueErrorFault
 from configkit.identity import canonical_bytes, hash_payload
 from identity_corpus import VECTORS, payload_of
 
@@ -55,7 +56,7 @@ def test_the_two_implementations_refuse_the_same_payloads() -> None:
         with pytest.raises(core.UnhashableValueError):
             core.canonical_json(payload)
     for payload in NON_FINITE:
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueErrorFault):
             canonical_bytes(payload)
         with pytest.raises(core.UnhashableValueError):
             core.canonical_json(payload)
