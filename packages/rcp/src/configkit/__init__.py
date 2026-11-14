@@ -35,6 +35,7 @@ from configkit.ports import (
     logger,
     once,
 )
+from configkit.roles import Role, identity_of, local_inputs, path_fields, redact, roles_of
 from configkit.spec import Brand, FrozenSpec, OperationOptions, OptionSchema, frozen_mapping, frozen_sequence
 
 __all__ = [
@@ -60,6 +61,13 @@ __all__ = [
     "logger",
     "configure",
     "once",
+    # roles.py
+    "Role",
+    "roles_of",
+    "identity_of",
+    "path_fields",
+    "redact",
+    "local_inputs",
     # spec.py
     "Brand",
     "FrozenSpec",
