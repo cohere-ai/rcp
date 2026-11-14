@@ -33,12 +33,15 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import UnionType
-from typing import Any, Final, Literal, Union, get_args, get_origin
+from typing import TYPE_CHECKING, Any, Final, Literal, Union, get_args, get_origin
 
 from pydantic import BaseModel, ValidationError
 
 from configkit.faults import Fault, OSErrorFault, require
 from configkit.roles import _declares_roles, _model_of, _nested_model, path_fields, redact, roles_of
+
+if TYPE_CHECKING:  # `overrides` sits above this module and imports it: the record names its type, not its code
+    from configkit.overrides import Override
 
 __all__ = [
     "Applied",
@@ -895,11 +898,11 @@ class Applied:
 
     Attributes:
         model: The validated model, after every override.
-        overrides: The ``configkit.overrides.Override`` records applied, in order. Typed loosely because
-            ``document`` is below ``overrides`` in the dependency order and imports nothing from it.
+        overrides: The ``configkit.overrides.Override`` records applied, in order. The name is imported for
+            type checking only: ``overrides`` sits above this module in the dependency order.
         payload: ``roles.identity_of(model)``: the CONTENT fields a key hashes.
     """
 
     model: BaseModel
-    overrides: tuple[Any, ...]
+    overrides: tuple[Override, ...]
     payload: Mapping[str, Any]

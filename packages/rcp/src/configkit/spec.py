@@ -3,9 +3,9 @@
 ``FrozenSpec`` is the shape a config block should have -- an unknown key is refused and no container is mutable
 -- and ``OperationOptions``/``OptionSchema`` are the two bases a consumer subclasses so that a command's bounds
 (rcp-15) and a reader's or writer's options (rcp-24) live in a declared model instead of a ``**options: Any``
-mapping. ``frozen_mapping`` and ``frozen_sequence`` are the container freezers those bases use as pydantic
-validators. ``Brand`` is the one parameter that fills schema ids, generated output-schema prefixes and
-environment-variable names (rcp-6), so no consumer's name is baked into the library.
+mapping. ``frozen_mapping`` and ``frozen_sequence`` are the container freezers a consumer wires with pydantic's
+``AfterValidator`` (no base here uses them). ``Brand`` is the one parameter that fills schema ids, generated
+output-schema prefixes and environment-variable names (rcp-6), so no consumer's name is baked into the library.
 
 A record type comes from a types module, not a service (rcp-50): this module reads the standard library and
 ``pydantic`` only, and imports no consumer.

@@ -134,7 +134,7 @@ class Ports:
 
     Attributes:
         clock: The clock, in seconds.
-        budget: The step or wall-clock budget, checked before each step.
+        budget: The budget, checked before each step: a step count, or a wall-clock deadline in seconds.
         sink: Where the log facade writes.
         exit_codes: The stable code -> process exit number table.
         renderer: The front end's renderer for a command result.

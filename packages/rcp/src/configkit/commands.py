@@ -54,7 +54,7 @@ __all__ = [
 
 #: The flags the root parser declares once (rcp-2). A request field of the same name would declare one twice, so
 #: the builder refuses it rather than letting argparse's last declaration win silently.
-_RESERVED_FLAGS: Final[tuple[str, ...]] = ("--json", "--traceback", "--help", "-h")
+_RESERVED_FLAGS: Final[tuple[str, ...]] = ("--json", "--traceback", "--help")
 
 #: The origins a repeatable option may have: one flag, appended, per value.
 _REPEATABLE_ORIGINS: Final[tuple[Any, ...]] = (list, tuple, set, frozenset, Sequence)
@@ -174,7 +174,8 @@ class Command:
         run: ``run(request) -> result``: the library call, given the validated request model.
         human_lines: ``human_lines(result) -> lines``: the text the verb prints in human mode, so the verb owns its
             own rendering and the library owns none (et-18).
-        services: ``services() -> Ports``: the host services this verb's call needs, when it needs any.
+        services: A factory returning the host services this verb's call needs, when it needs any. Nothing
+            in the library reads it: a front end wires its own ports (the wiring is the consumer's).
         add_arguments: A post-declaration hook that adds what no request field can express (a positional
             argument), or ``None``.
     """
@@ -348,7 +349,9 @@ def index(verbs: Sequence[Command]) -> tuple[str, ...]:
 class CommandTree:
     """The declared verbs as data, so a front end can describe itself without importing the callables (rcp-1).
 
-    Every mapping is keyed by a verb's path (``"run list"``) and holds one entry per entry of :attr:`paths`.
+    :attr:`paths`, :attr:`options` and :attr:`results` are keyed by a verb's path (``"run list"``) and hold
+    one entry per entry of :attr:`paths`; :attr:`children` also holds one entry per group path, because a
+    group is a path the tree names and no verb declares.
 
     Attributes:
         paths: The verbs' paths, in declaration order.

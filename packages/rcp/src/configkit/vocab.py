@@ -105,7 +105,7 @@ class MetricKey(str):
 
     Attributes:
         name: The metric's name, lowercased, with every prefix it carries (``"compressed_1536d_ndcg"``).
-        k: The cutoff, a positive ``int``, or ``None`` when the name declares no cutoff.
+        k: The cutoff, a rank depth in items (a positive ``int``), or ``None`` when the name declares none.
     """
 
     name: str
