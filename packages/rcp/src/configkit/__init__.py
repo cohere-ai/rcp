@@ -119,6 +119,7 @@ from configkit.schemas import (
 from configkit.spec import (
     Brand,
     FrozenSpec,
+    OpenOptionSchema,
     OperationOptions,
     OptionSchema,
     declared_along_mro,
@@ -254,6 +255,7 @@ __all__ = [
     "frozen_mapping",
     "frozen_sequence",
     "OptionSchema",
+    "OpenOptionSchema",
     "OperationOptions",
     # storage.py
     "publish",

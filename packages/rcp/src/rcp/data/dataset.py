@@ -26,8 +26,8 @@ import math
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import Any, Literal, NamedTuple
 
-from configkit.spec import OptionSchema
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError, field_validator
+from configkit.spec import OpenOptionSchema
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError, field_validator, model_validator
 from rcp_core.records import Document, Query
 
 from rcp.data.io import READERS, Provenance, get_reader
@@ -363,21 +363,46 @@ def _check_ids(
             )
 
 
-class ReaderOptions(OptionSchema):
+#: The keys :func:`load_dataset` passes itself: an option cannot name one, or it would unpack beside the explicit
+#: keyword (a bare ``TypeError``) instead of reaching a reader. ``split`` is not one: the envelope forwards it as
+#: the reader's own option, and a config sets it there (a dataset block has no ``split`` field).
+_RESERVED_OPTION_KEYS = frozenset({"uri", "revision"})
+
+
+class ReaderOptions(OpenOptionSchema):
     """A reader's options, as one declared model instead of a ``**options: Any`` mapping (rcp-24).
 
     The options a reader takes are its own -- ``qrels_uri`` and ``queries_uri`` for ``images:``, ``duplicates``
-    for a Hub repository, ``name`` for any of them -- so this model accepts every key and keeps it, and the
-    *reader* stays the authority on which keys exist (:func:`rcp.data.io.get_reader` refuses one it does not
-    take, naming the ones it does). What the model buys is a type at :func:`load_dataset`'s signature and one
-    place to build the options from a mapping or a config block::
+    for a Hub repository, ``name`` for any of them -- so this model keeps every key and the *reader* stays the
+    authority on which keys exist (:func:`rcp.data.io.get_reader` refuses one it does not take, naming the ones
+    it does). It is an :class:`~configkit.spec.OpenOptionSchema`, not an
+    :class:`~configkit.spec.OptionSchema`: the closed base's "an unknown option is refused" contract belongs to
+    models whose fields are the whole vocabulary, and this one's are the reader's signature. What the model buys
+    is a type at :func:`load_dataset`'s signature, one place to build the options from a mapping or a config
+    block, and the refusal of the two keys :func:`load_dataset` passes itself (``uri`` and ``revision``), which
+    would otherwise unpack beside its explicit keyword and raise a bare ``TypeError``::
 
         load_dataset("images:/data/vidore", options=ReaderOptions(queries_uri="q.jsonl"))
 
     It is frozen, so the options one call was given cannot change under it.
     """
 
-    model_config = ConfigDict(extra="allow")
+    @model_validator(mode="before")
+    @classmethod
+    def _no_dataset_keys(cls, value: Any) -> Any:
+        """Refuse a key :func:`load_dataset` passes itself, naming the field that owns it."""
+        if isinstance(value, Mapping):
+            reserved = sorted(set(value) & _RESERVED_OPTION_KEYS)
+            if reserved:
+                raise ConfigError(
+                    f"reader option {reserved[0]!r} is load_dataset's own argument, not the reader's",
+                    hint="name it on load_dataset (uri=..., revision=...) or on the config's dataset block; "
+                    "options= carries the reader's own keys",
+                    cli_hint="write it on the dataset block (dataset.uri, dataset.revision) or with "
+                    "--set dataset.<field>=...",
+                    details={"options": reserved},
+                )
+        return value
 
 
 def load_dataset(

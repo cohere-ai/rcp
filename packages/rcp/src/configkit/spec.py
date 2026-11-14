@@ -1,9 +1,11 @@
 """The shared types: the frozen spec bases, the container freezers and the one ``Brand`` parameter.
 
 ``FrozenSpec`` is the shape a config block should have -- an unknown key is refused and no container is mutable
--- and ``OperationOptions``/``OptionSchema`` are the two bases a consumer subclasses so that a command's bounds
-(rcp-15) and a reader's or writer's options (rcp-24) live in a declared model instead of a ``**options: Any``
-mapping. ``frozen_mapping`` and ``frozen_sequence`` are the container freezers a consumer wires with pydantic's
+-- and ``OperationOptions``/``OptionSchema``/``OpenOptionSchema`` are the bases a consumer subclasses so that a
+command's bounds (rcp-15) and a reader's or writer's options (rcp-24) live in a declared model instead of a
+``**options: Any`` mapping. ``OptionSchema`` is the closed option model and ``OpenOptionSchema`` the one whose
+vocabulary is the consumer's own signature (the reader's, for a reader's options).
+``frozen_mapping`` and ``frozen_sequence`` are the container freezers a consumer wires with pydantic's
 ``AfterValidator`` (no base here uses them). ``Brand`` is the one parameter that fills schema ids, generated
 output-schema prefixes and environment-variable names (rcp-6), so no consumer's name is baked into the library.
 
@@ -23,6 +25,7 @@ from pydantic import BaseModel, ConfigDict
 __all__ = [
     "Brand",
     "FrozenSpec",
+    "OpenOptionSchema",
     "OperationOptions",
     "OptionSchema",
     "declared_along_mro",
@@ -113,6 +116,19 @@ class OperationOptions(FrozenSpec):
 
 class OptionSchema(FrozenSpec):
     """A reader's or writer's declared option schema: an unknown option is refused, never silently ignored (rcp-24)."""
+
+
+class OpenOptionSchema(FrozenSpec):
+    """An option schema whose keys are the consumer's own: a key the model does not declare is kept (rcp-24).
+
+    The reader's signature is the authority, the model is the bag: a reader's options (``qrels_uri``,
+    ``duplicates``, ...) are declared by the reader itself, and the seam that builds the reader refuses one it
+    does not take. The closed :class:`OptionSchema` stays for a model whose fields are the whole vocabulary; a
+    subclass of it that flips ``extra`` is the half-typed seam this base replaces, because the type would then
+    accept a key the contract says is refused.
+    """
+
+    model_config = ConfigDict(extra="allow")
 
 
 @dataclass(frozen=True)

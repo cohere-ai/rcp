@@ -16,6 +16,7 @@ import pytest
 from configkit.spec import (
     Brand,
     FrozenSpec,
+    OpenOptionSchema,
     OperationOptions,
     OptionSchema,
     declared_along_mro,
@@ -69,6 +70,27 @@ def test_operation_options_and_option_schema_are_frozen_specs() -> None:
     assert _Options(uri="a").uri == "a"
     with pytest.raises(ValidationError):
         _Options(uri="a", surprise=1)
+
+
+def test_open_option_schema_keeps_an_undeclared_key_and_stays_frozen() -> None:
+    """CP-3: the reader's signature is the authority, the model is the bag -- a distinct base, not a flip.
+
+    ``OptionSchema`` promises "an unknown option is refused"; a consumer whose vocabulary is the reader's own
+    signature cannot keep that promise, and subclassing the closed base while setting ``extra="allow"`` is the
+    half-typed seam this base replaces. The open base keeps the key, stays frozen, and is not an
+    ``OptionSchema``, so the closed contract has exactly the models that honour it.
+    """
+    assert issubclass(OpenOptionSchema, FrozenSpec)
+    assert not issubclass(OpenOptionSchema, OptionSchema)
+
+    class _Options(OpenOptionSchema):
+        name: str | None = None
+
+    options = _Options(name="x", reader_specific=1)
+    assert options.name == "x"
+    assert options.model_extra == {"reader_specific": 1}
+    with pytest.raises(ValidationError):
+        options.name = "y"
 
 
 def test_brand_is_frozen_and_names_its_three_uses() -> None:

@@ -200,6 +200,41 @@ def test_reader_schemes_load_through_the_readers(tmp_path: Path) -> None:
     assert from_jsonl.candidates == {"q1": ["d2", "d1"]}, "a ranking source carries its pools"
 
 
+def test_an_unknown_reader_option_is_refused_at_the_seam(tmp_path: Path) -> None:
+    """CP-3: the model is the bag, the reader's signature is the authority: a key no reader takes is a refusal."""
+    from rcp.data.dataset import ReaderOptions
+
+    ranking = tmp_path / "pool.jsonl"
+    ranking.write_text(json.dumps({"query_id": "q1", "query": "slow", "doc_ids": ["d2"], "docs": ["x"]}) + "\n")
+    with pytest.raises(ConfigError, match="takes no option 'bogus'"):
+        load_dataset(f"jsonl:{ranking}", options=ReaderOptions(bogus=1))
+
+
+@pytest.mark.parametrize("reserved", [{"uri": "other"}, {"revision": "dev"}])
+def test_reader_options_refuse_the_datasets_own_keys(reserved: dict[str, str]) -> None:
+    """CP-3: ``uri`` and ``revision`` are ``load_dataset``'s own keywords, so an option cannot name one.
+
+    They used to be kept by the open model and unpacked beside the explicit keyword, a bare ``TypeError`` (exit
+    1, the bug-report shape) instead of the seam's own ``ConfigError``. Refused when the options are built, so
+    no call can reach the unpack with one.
+    """
+    from rcp.data.dataset import ReaderOptions
+
+    key = next(iter(reserved))
+    with pytest.raises(ConfigError, match=f"reader option {key!r}"):
+        ReaderOptions(**reserved)
+
+
+def test_reader_options_are_the_open_schema_not_the_refusing_one() -> None:
+    """CP-3: the library records the decision -- the reader's signature is the authority, the model is the bag."""
+    from configkit.spec import OpenOptionSchema, OptionSchema
+
+    from rcp.data.dataset import ReaderOptions
+
+    assert issubclass(ReaderOptions, OpenOptionSchema)
+    assert not issubclass(ReaderOptions, OptionSchema), "the closed base's contract is 'an unknown option is refused'"
+
+
 # ---------------------------------------------------------------------------
 # Rankings
 # ---------------------------------------------------------------------------
