@@ -235,7 +235,7 @@ def test_a_path_fields_row_written_as_one_string_is_refused(tmp_path: Path) -> N
     """A string is a sequence of characters: a dotted row would walk ``s``, ``o``, ``u``... and resolve nothing."""
     path = _write(tmp_path / "doc.yaml", "source: data\noutput: runs\nname: x\n")
     with pytest.raises(Fault) as caught:
-        resolve(read(path), _Doc, path_fields=["source"])
+        resolve(read(path), _Doc, rows=["source"])
     assert "path_fields" in caught.value.message
 
 

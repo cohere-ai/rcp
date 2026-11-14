@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 import pytest
-from configkit.document import Applied, load
+from configkit.document import Applied, deep_merge, leaf_paths, load, read, resolve, validate_or_fault
 from configkit.faults import FAULT_CODES, Fault
 from configkit.overrides import (
     VALUE_ERRORS,
@@ -83,6 +83,27 @@ class _NoRoles(BaseModel):
 
     source: str
     name: str
+
+
+class _Judge(BaseModel):
+    """A block held in a list: ``leaf_paths`` enumerates its leaves, so the writer must write one."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    concurrency: int = 1
+
+    IDENTITY_ROLES: ClassVar[dict[str, Any]] = {"concurrency": Role.RUNTIME}
+
+
+class _Panel(BaseModel):
+    """A config whose one nested block is a list of models (the product's ``judges`` shape)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    name: str
+    judges: list[_Judge] = Field(default_factory=list)
+
+    IDENTITY_ROLES: ClassVar[dict[str, Any]] = {"name": Role.CONTENT, "judges": Role.CONTENT}
 
 
 def _write(path: Path, text: str) -> Path:
@@ -293,6 +314,59 @@ def test_merge_layers_refuses_a_content_conflict_and_allows_a_runtime_override()
     with pytest.raises(Fault) as caught:
         merge_layers({"nope": 1}, {"nope": 2}, roles=roles)
     assert caught.value.details["refusal"] == "no_role"
+
+
+def test_a_list_of_models_is_a_branch_at_both_ends_of_the_grammar() -> None:
+    """M5: ``leaf_paths``/``from_env`` enumerate ``judges.concurrency``; ``apply`` must write it, not refuse it.
+
+    The two halves of "what is a leaf" disagreed: the enumeration descends through a list of models and the
+    writer refused it ("judges runs through judges, which is not a model"), so an environment name the library
+    itself produced could not be applied.
+    """
+    assert "judges.concurrency" in leaf_paths(_Panel)
+    records = from_env({"P_JUDGES_CONCURRENCY": "3"}, prefix="P", model=_Panel)
+    assert [record.path for record in records] == ["judges.concurrency"]
+
+    draft = _Panel.model_validate({"name": "x", "judges": [{"concurrency": 1}, {"concurrency": 2}]})
+    applied = apply(draft, records, base=Path("/data"))
+    assert [judge.concurrency for judge in applied.judges] == [3, 3]
+
+
+def test_deep_merge_reports_each_leaf_the_child_changes() -> None:
+    """M8: one merge rule. ``on_diff`` is how the raising layer merge reads the same recursion."""
+    seen: list[tuple[tuple[str, ...], Any, Any]] = []
+    merged = deep_merge(
+        {"a": {"b": 1}, "keep": 2},
+        {"a": {"b": 2}},
+        on_diff=lambda path, base, child: seen.append((path, base, child)),
+    )
+    assert merged == {"a": {"b": 2}, "keep": 2}
+    assert seen == [(("a", "b"), 1, 2)]
+    assert deep_merge({"a": {"b": 1}}, {"a": {"c": 2}}) == {"a": {"b": 1, "c": 2}}
+
+
+def test_a_layer_value_that_only_compares_equal_is_a_conflict() -> None:
+    """L10: ``==`` makes ``seed: true`` equal to ``seed: 1``, so the base won with no record.
+
+    The compare is the canonical form every identity in the library is taken over, so two values are equal only
+    when they hash equal.
+    """
+    roles = {"seed": Role.CONTENT}
+    with pytest.raises(Fault) as caught:
+        merge_layers({"seed": True}, {"seed": 1}, roles=roles)
+    assert caught.value.details["refusal"] == "content_conflict"
+    assert merge_layers({"seed": 1}, {"seed": 1}, roles=roles) == {"seed": 1}
+    assert merge_layers({"seed": True}, {"seed": True}, roles=roles) == {"seed": True}
+
+
+def test_validate_or_fault_maps_a_validation_error_to_the_one_fault(tmp_path: Path) -> None:
+    """M9: the ``ValidationError`` -> ``Fault`` tail is one function, and both loaders call it."""
+    draft = resolve(read(_write(tmp_path / "doc.yaml", "name: x\nsource: data\njudge:\n  concurrency: nope\n")), _Run)
+    with pytest.raises(Fault) as caught:
+        validate_or_fault(draft, model=_Run, source="doc.yaml")
+    assert caught.value.code == "value_error"
+    assert caught.value.details["errors"][0]["field"] == "judge.concurrency"
+    assert "doc.yaml" in caught.value.message
 
 
 # --- the pipeline, and the order it runs in ------------------------------------------------------------------

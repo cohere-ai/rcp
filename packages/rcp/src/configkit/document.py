@@ -38,6 +38,7 @@ from typing import TYPE_CHECKING, Any, Final, Literal, Union, get_args, get_orig
 from pydantic import BaseModel, ValidationError
 
 from configkit.faults import Fault, OSErrorFault, require
+from configkit.identity import canonical_bytes
 from configkit.roles import _declares_roles, _model_of, _nested_model, path_fields, redact, roles_of
 
 if TYPE_CHECKING:  # `overrides` sits above this module and imports it: the record names its type, not its code
@@ -56,6 +57,7 @@ __all__ = [
     "resolve",
     "resolve_reference",
     "validate",
+    "validate_or_fault",
 ]
 
 #: The key a document uses to name the schema it was written as. It is popped before validation, so no model
@@ -70,7 +72,7 @@ _EXTENDS: Final[str] = "extends"
 _YAML_HINT: Final[str] = "install the YAML reader of the distribution that ships this library"
 
 
-def _refusal(message: str, *, code: str = "value_error", **details: Any) -> Fault:
+def _refuse(message: str, *, code: str = "value_error", **details: Any) -> Fault:
     """A deliberate refusal: *message* for a person, *code* from the fault table, *details* for a program."""
     return Fault(message, code=code, details=details)
 
@@ -84,28 +86,67 @@ def _copy(value: Any) -> Any:
     return copy.deepcopy(value)
 
 
-def deep_merge(base: Mapping[str, Any], child: Mapping[str, Any]) -> dict[str, Any]:
+def _same(left: Any, right: Any) -> bool:
+    """Whether two layer values are one value: the canonical form, so ``True`` and ``1`` are not the same.
+
+    ``==`` says ``True == 1``, so a layer's ``seed: true`` over a base's ``seed: 1`` was "equal" and the base won
+    with no record. The compare is the canonical bytes every identity in the library is taken over, so two values
+    are equal only when they hash equal. A value with no canonical form (a set, a naive datetime) cannot enter an
+    identity; a merge still decides, and it compares the type and then the value, never ``==`` alone.
+    """
+    try:
+        return canonical_bytes(left) == canonical_bytes(right)
+    except (TypeError, ValueError):
+        return type(left) is type(right) and bool(left == right)
+
+
+def deep_merge(
+    base: Mapping[str, Any],
+    child: Mapping[str, Any],
+    *,
+    on_diff: Callable[[tuple[str, ...], Any, Any], None] | None = None,
+) -> dict[str, Any]:
     """*base* with *child* merged over it: mappings merge key by key, any other value the child replaces.
 
     This is the one implementation of the ``extends`` rule: a base document is merged *under* the child that
     extends it, recursively, so a key the child does not set is inherited and a key it does set wins. The result
     shares no mutable value with *base* or *child*, and neither argument is changed.
 
+    ``on_diff`` is what a caller with a policy adds: it is called with the path, the base value and the child
+    value at every leaf the child sets to a different value, and a hook that raises refuses the merge.
+    :func:`configkit.overrides.merge_layers` is that hook -- the CONTENT refusal -- so there is one recursion and
+    one notion of "different", not two.
+
     Args:
         base: The mapping merged under *child* (the extended document).
         child: The mapping merged over *base* (the extending document).
+        on_diff: Called as ``on_diff(path, base_value, child_value)`` at each differing leaf; raising refuses.
 
     Returns:
         A new mapping.
     """
     merged: dict[str, Any] = _copy(base)
-    for key, value in child.items():
-        inherited = merged.get(key)
-        if isinstance(value, Mapping) and isinstance(inherited, Mapping):
-            merged[key] = deep_merge(inherited, value)
-        else:
-            merged[key] = _copy(value)
+    _merge_into(merged, child, path=(), on_diff=on_diff)
     return merged
+
+
+def _merge_into(
+    merged: dict[str, Any],
+    child: Mapping[str, Any],
+    *,
+    path: tuple[str, ...],
+    on_diff: Callable[[tuple[str, ...], Any, Any], None] | None,
+) -> None:
+    """Merge *child* into *merged* in place, reporting each differing leaf to *on_diff*."""
+    for key, value in child.items():
+        here = (*path, str(key))
+        inherited = merged.get(key)
+        if isinstance(value, Mapping) and isinstance(inherited, dict):
+            _merge_into(inherited, value, path=here, on_diff=on_diff)
+            continue
+        if key in merged and on_diff is not None and not _same(inherited, value):
+            on_diff(here, inherited, value)
+        merged[key] = _copy(value)
 
 
 @dataclass(frozen=True)
@@ -137,7 +178,7 @@ def _check_keys(node: Any, path: Path, *, seen: set[int]) -> None:
         keys: list[Any] = []
         for key_node, value_node in node.value:
             if key_node.value in keys:
-                raise _refusal(
+                raise _refuse(
                     f"config {path} holds the key {key_node.value!r} twice; a duplicate key can hide a value, "
                     "and a hidden value breaks reproducibility",
                     path=str(path),
@@ -162,7 +203,7 @@ def _yaml_document(text: str, path: Path, hint: str) -> Any:
         _check_keys(yaml.compose(text), path, seen=set())
         return yaml.safe_load(text)
     except yaml.YAMLError as exc:
-        raise _refusal(f"config {path} is not YAML: {exc}", path=str(path)) from exc
+        raise _refuse(f"config {path} is not YAML: {exc}", path=str(path)) from exc
 
 
 def _json_document(text: str, path: Path) -> Any:
@@ -172,7 +213,7 @@ def _json_document(text: str, path: Path) -> Any:
         mapping: dict[str, Any] = {}
         for key, value in pairs:
             if key in mapping:
-                raise _refusal(
+                raise _refuse(
                     f"config {path} holds the key {key!r} twice; a duplicate key can hide a value, "
                     "and a hidden value breaks reproducibility",
                     path=str(path),
@@ -184,7 +225,7 @@ def _json_document(text: str, path: Path) -> Any:
     try:
         return json.loads(text, object_pairs_hook=unique)
     except json.JSONDecodeError as exc:
-        raise _refusal(f"config {path} is not JSON: {exc}", path=str(path)) from exc
+        raise _refuse(f"config {path} is not JSON: {exc}", path=str(path)) from exc
 
 
 def _mapping(path: Path, yaml_hint: str) -> dict[str, Any]:
@@ -192,12 +233,12 @@ def _mapping(path: Path, yaml_hint: str) -> dict[str, Any]:
     try:
         text = path.read_text(encoding="utf-8")
     except UnicodeDecodeError as exc:
-        raise _refusal(f"config {path} is not UTF-8 text: {exc}", path=str(path)) from exc
+        raise _refuse(f"config {path} is not UTF-8 text: {exc}", path=str(path)) from exc
     payload = _json_document(text, path) if path.suffix.lower() == ".json" else _yaml_document(text, path, yaml_hint)
     if payload is None:
         return {}
     if not isinstance(payload, Mapping):
-        raise _refusal(f"config {path} holds {type(payload).__name__}, not a mapping", path=str(path))
+        raise _refuse(f"config {path} holds {type(payload).__name__}, not a mapping", path=str(path))
     return dict(payload)
 
 
@@ -206,7 +247,7 @@ def _merged(path: Path, chain: tuple[Path, ...], *, extends: bool, yaml_hint: st
     resolved = path.resolve()
     if resolved in chain:
         links = " -> ".join(str(link) for link in (*chain, resolved))
-        raise _refusal(
+        raise _refuse(
             f"config {path} extends itself through {links}; an extends chain must end",
             chain=[str(link) for link in (*chain, resolved)],
         )
@@ -215,12 +256,12 @@ def _merged(path: Path, chain: tuple[Path, ...], *, extends: bool, yaml_hint: st
     if base_ref is None:
         return payload
     if not extends:
-        raise _refusal(
+        raise _refuse(
             f"config {path} declares extends: {base_ref!r}, but the reader was called with extends=False",
             path=str(path),
         )
     if not isinstance(base_ref, str):
-        raise _refusal(f"config {path}: `extends` names one path, got {base_ref!r}", path=str(path))
+        raise _refuse(f"config {path}: `extends` names one path, got {base_ref!r}", path=str(path))
     base_path = path.parent / base_ref
     try:
         base = _merged(base_path, (*chain, resolved), extends=extends, yaml_hint=yaml_hint)
@@ -265,7 +306,7 @@ def read(
     payload = _merged(resolved, (), extends=extends, yaml_hint=yaml_hint)
     declared = payload.pop(_SCHEMA, None)
     if schema_id is not None and declared != schema_id:
-        raise _refusal(
+        raise _refuse(
             f"config {path} declares schema {declared!r}, not {schema_id!r}; every document must declare {schema_id!r}",
             path=str(path),
             schema=declared,
@@ -293,7 +334,7 @@ def _path_rows(model: type[BaseModel], extra: Sequence[Sequence[str]]) -> tuple[
     rows: list[tuple[str, ...]] = []
     for row in extra:
         if isinstance(row, str):
-            raise _refusal(
+            raise _refuse(
                 f"a path_fields row is a sequence of field names, not the string {row!r}; "
                 f"write {(row,)!r} or {row!r}.split('.') for a dotted row",
                 row=row,
@@ -344,7 +385,7 @@ def _unknown_keys(model: type[BaseModel], payload: Mapping[str, Any], *, source:
     unknown = sorted(set(payload) - set(model.model_fields))
     if unknown:
         known = ", ".join(sorted(model.model_fields))
-        raise _refusal(
+        raise _refuse(
             f"{source}: {model.__name__} does not declare {', '.join(repr(key) for key in unknown)}; "
             f"known keys: {known}",
             model=model.__name__,
@@ -358,7 +399,7 @@ def resolve[ModelT: BaseModel](
     document: Document,
     model: type[ModelT],
     *,
-    path_fields: Sequence[Sequence[str]] = (),
+    rows: Sequence[Sequence[str]] = (),
 ) -> ModelT:
     """Build *model* from *document* with ``model_construct`` and resolve every ``PATH`` leaf: an unvalidated draft.
 
@@ -370,8 +411,8 @@ def resolve[ModelT: BaseModel](
     Args:
         document: The document to build the draft from.
         model: The model class to construct; no value is validated.
-        path_fields: Extra dotted rows to resolve, over the ``Role.PATH`` leaves the model declares. A row through
-            a list or mapping of models applies to every element.
+        rows: Extra dotted rows to resolve, over the ``Role.PATH`` leaves the model declares. A row through a
+            list or mapping of models applies to every element.
 
     Returns:
         The draft: a model built without validation, whose ``PATH`` leaves hold absolute paths.
@@ -384,7 +425,7 @@ def resolve[ModelT: BaseModel](
     """
     payload = document.payload
     _unknown_keys(model, payload, source=str(document.path))
-    for parts in _path_rows(model, path_fields):
+    for parts in _path_rows(model, rows):
         payload = _resolved(payload, tuple(parts), document.base)
     return model.model_construct(**payload)
 
@@ -413,6 +454,40 @@ def _validated[ModelT: BaseModel](draft: ModelT, field_types: FieldTypes | None)
     return type(draft).model_validate(payload)
 
 
+def validate_or_fault[ModelT: BaseModel](
+    draft: ModelT,
+    *,
+    model: type[BaseModel],
+    source: str,
+    field_types: FieldTypes | None = None,
+    overrides: Sequence[str] = (),
+) -> ModelT:
+    """Validate *draft*, mapping a ``ValidationError`` to the one :func:`config_error` fault.
+
+    The one tail both loaders use -- :func:`load` with no overrides, :func:`configkit.overrides.pipeline` with
+    the overrides it applied -- so a validation failure is one fault with one shape on both paths, and the
+    ``--set`` attribution (:func:`config_error`'s ``overrides=``) is not something a caller has to remember.
+
+    Args:
+        draft: The draft :func:`resolve` built.
+        model: The model class that was validated.
+        source: What was validated (a file path, ``"run config"``), named in the fault.
+        field_types: A registry of validators for the draft's own field types, or ``None`` for pydantic alone.
+        overrides: The ``dotted.key=value`` overrides applied before validating.
+
+    Returns:
+        The validated model.
+
+    Raises:
+        Fault: a value does not fit (``code`` is ``value_error``, one problem per entry in
+            ``details["errors"]``).
+    """
+    try:
+        return validate(draft, field_types=field_types)
+    except ValidationError as exc:
+        raise config_error(exc, model=model, source=source, overrides=overrides) from exc
+
+
 def validate[ModelT: BaseModel](draft: ModelT, *, field_types: FieldTypes | None = None) -> ModelT:
     """Validate *draft* into a model, so one invalid document produces one ``pydantic.ValidationError``.
 
@@ -439,7 +514,7 @@ def load[ModelT: BaseModel](
     *,
     schema_id: str | None = None,
     path_fields: Sequence[Sequence[str]] = (),
-    validate: bool = True,
+    do_validate: bool = True,
     extends: bool = True,
     yaml_hint: str = _YAML_HINT,
     field_types: FieldTypes | None = None,
@@ -455,26 +530,23 @@ def load[ModelT: BaseModel](
         model: The model class to build.
         schema_id: The id the document's ``schema`` key must equal, or ``None`` for no check.
         path_fields: Extra dotted rows to resolve, over the ``Role.PATH`` leaves the model declares.
-        validate: Whether to validate; ``False`` returns the draft :func:`resolve` built.
+        do_validate: Whether to validate; ``False`` returns the draft :func:`resolve` built.
         extends: Whether a top-level ``extends`` is honoured.
         yaml_hint: The install line a missing YAML reader reports, verbatim.
         field_types: A registry of validators for the model's own field types.
 
     Returns:
-        The model, or the draft when *validate* is ``False``.
+        The model, or the draft when *do_validate* is ``False``.
 
     Raises:
         Fault: reading refused the document (see :func:`read`), or validation failed (one
             :func:`config_error` fault naming the file and the field).
     """
     document = read(path, schema_id=schema_id, extends=extends, yaml_hint=yaml_hint)
-    draft = resolve(document, model, path_fields=path_fields)
-    if not validate:
+    draft = resolve(document, model, rows=path_fields)
+    if not do_validate:
         return draft
-    try:
-        return _validated(draft, field_types)
-    except ValidationError as exc:
-        raise config_error(exc, model=model, source=str(path)) from exc
+    return validate_or_fault(draft, model=model, source=str(path), field_types=field_types)
 
 
 def _type_name(annotation: Any) -> str | None:
@@ -801,7 +873,7 @@ class FieldTypes:
                 would make the result depend on import order.
         """
         if model_type in self._validators:
-            raise _refusal(
+            raise _refuse(
                 f"a field validator is already registered for {model_type.__name__}; "
                 "one field type has one rule, so replace the registry instead",
                 model_type=model_type.__name__,
@@ -876,7 +948,7 @@ def resolve_reference(text: str, *, attempts: list[str]) -> Mapping[str, Any]:
     """
     reference = text.strip()
     if not reference:
-        raise _refusal("a reference names nothing", reference=text)
+        raise _refuse("a reference names nothing", reference=text)
     attempts.append(f"path {reference!r}")
     path = Path(reference)
     if path.is_file():

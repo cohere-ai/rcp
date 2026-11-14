@@ -20,24 +20,23 @@ dependency is this module above :mod:`configkit.document`, never the reverse: ``
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from types import MappingProxyType
-from typing import Any, Final
+from types import MappingProxyType, UnionType
+from typing import Any, Final, Union, get_args, get_origin
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
 from configkit.document import (
     _YAML_HINT,
     Applied,
-    _copy,
     _resolve_paths,
-    config_error,
+    deep_merge,
     leaf_paths,
     read,
     resolve,
-    validate,
+    validate_or_fault,
 )
 from configkit.faults import Fault, require
 from configkit.roles import Role, _declares_roles, _model_of, identity_of, roles_of
@@ -233,6 +232,48 @@ def from_env(
     )
 
 
+def _descend(annotation: Any) -> tuple[str, type[BaseModel]] | None:
+    """How a dotted path runs through a field: the model it reaches, and the container that model sits in.
+
+    One classification for both ends of the grammar. :func:`configkit.document.leaf_paths` and :func:`from_env`
+    enumerate the leaves of a nested model, a list of models and a mapping of models alike, so :func:`_write`
+    must write all three: otherwise an environment name the library itself produced ("``judges.concurrency``")
+    is refused by the writer as "``judges`` runs through ``judges``, which is not a model".
+
+    Returns:
+        ``("one", Model)`` for a nested model, ``("list", Model)`` for a sequence of models, ``("mapping",
+        Model)`` for a mapping of models, or ``None`` when the field is a leaf.
+    """
+    direct = _model_of(annotation)
+    if direct is not None:
+        return ("one", direct)
+    origin = get_origin(annotation)
+    if origin in (Union, UnionType):
+        for argument in get_args(annotation):
+            found = _descend(argument)
+            if found is not None:
+                return found
+        return None
+    if origin in (list, tuple, set, frozenset):
+        inner = get_args(annotation)[0] if get_args(annotation) else Any
+        nested = _model_of(inner)
+        return ("list", nested) if nested is not None else None
+    if origin in (dict, Mapping):
+        inner = get_args(annotation)[-1] if get_args(annotation) else Any
+        nested = _model_of(inner)
+        return ("mapping", nested) if nested is not None else None
+    return None
+
+
+def _each(node: Any, kind: str, apply: Callable[[Any], Any]) -> Any:
+    """*node* -- the model, list or mapping a field holds -- with *apply* run on each model it holds."""
+    if kind == "list":
+        return [apply(item if item is not None else {}) for item in (node or ())]
+    if kind == "mapping":
+        return {key: apply(item if item is not None else {}) for key, item in (node or {}).items()}
+    return apply(node if node is not None else {})
+
+
 def _write(
     node: Any,
     model: type[BaseModel],
@@ -242,6 +283,7 @@ def _write(
     base: Path,
     path: str,
     prefix: tuple[str, ...] = (),
+    source: str | None = None,
 ) -> Any:
     """*node* -- a model, or the mapping a draft holds in its place -- with the dotted *parts* written to *value*.
 
@@ -251,22 +293,28 @@ def _write(
     head, rest = parts[0], parts[1:]
     field = model.model_fields.get(head)
     if field is None:
-        raise _refusal("not_a_leaf", path=path, model=model.__name__, known=_leaves(model, prefix))
+        raise _refusal("not_a_leaf", path=path, model=model.__name__, known=_leaves(model, prefix), source=source)
     if not rest:
         written = _resolve_paths(value, base) if _role_of(model, head) is Role.PATH else value
     else:
-        nested = _model_of(field.annotation)
-        if nested is None:
-            raise _refusal("not_a_mapping", path=path, head=head)
+        shape = _descend(field.annotation)
+        if shape is None:
+            raise _refusal("not_a_mapping", path=path, head=head, source=source)
+        kind, nested = shape
         child = getattr(node, head, None) if isinstance(node, BaseModel) else node.get(head)
-        written = _write(
-            child if child is not None else {},
-            nested,
-            rest,
-            value,
-            base=base,
-            path=path,
-            prefix=(*prefix, head),
+        written = _each(
+            child,
+            kind,
+            lambda item: _write(
+                item,
+                nested,
+                rest,
+                value,
+                base=base,
+                path=path,
+                prefix=(*prefix, head),
+                source=source,
+            ),
         )
     if isinstance(node, BaseModel):
         return node.model_copy(update={head: written})
@@ -309,6 +357,7 @@ def apply[ModelT: BaseModel](
             override.value,
             base=base,
             path=override.path,
+            source=override.source,
         )
     return updated
 
@@ -320,25 +369,31 @@ def _clear(
     *,
     path: str,
     prefix: tuple[str, ...] = (),
+    source: str | None = None,
 ) -> Any:
     """*node* with the dotted *parts* removed: a key dropped from a mapping, a model field set to its default."""
     head, rest = parts[0], parts[1:]
     field = model.model_fields.get(head)
     if field is None:
-        raise _refusal("not_a_leaf", path=path, model=model.__name__, known=_leaves(model, prefix))
+        raise _refusal("not_a_leaf", path=path, model=model.__name__, known=_leaves(model, prefix), source=source)
     if not rest:
         if isinstance(node, Mapping):
             return {key: item for key, item in node.items() if key != head}
         if field.is_required():
-            raise _refusal("no_default", path=path)
+            raise _refusal("no_default", path=path, source=source)
         return node.model_copy(update={head: field.get_default(call_default_factory=True)})
-    nested = _model_of(field.annotation)
-    if nested is None:
-        raise _refusal("not_a_mapping", path=path, head=head)
+    shape = _descend(field.annotation)
+    if shape is None:
+        raise _refusal("not_a_mapping", path=path, head=head, source=source)
+    kind, nested = shape
     child = getattr(node, head, None) if isinstance(node, BaseModel) else node.get(head)
     if child is None:
-        raise _refusal("not_a_leaf", path=path, model=model.__name__, known=_leaves(model, prefix))
-    cleared = _clear(child, nested, rest, path=path, prefix=(*prefix, head))
+        raise _refusal("not_a_leaf", path=path, model=model.__name__, known=_leaves(model, prefix), source=source)
+
+    def clear(item: Any) -> Any:
+        return _clear(item, nested, rest, path=path, prefix=(*prefix, head), source=source)
+
+    cleared = _each(child, kind, clear)
     if isinstance(node, BaseModel):
         return node.model_copy(update={head: cleared})
     return {**node, head: cleared}
@@ -363,35 +418,6 @@ def unset[ModelT: BaseModel](draft: ModelT, path: str) -> ModelT:
             (``not_a_mapping``), or names a required field with no default (``no_default``).
     """
     return _clear(draft, type(draft), path.split("."), path=path)
-
-
-def _merge(
-    base: Mapping[str, Any],
-    overlay: Mapping[str, Any],
-    *,
-    roles: Mapping[str, Role],
-    prefix: tuple[str, ...],
-) -> dict[str, Any]:
-    """*base* with *overlay* merged over it, refusing a difference under a ``CONTENT`` field."""
-    merged: dict[str, Any] = _copy(base)
-    for key, value in overlay.items():
-        path = (*prefix, str(key))
-        if key not in merged:
-            merged[key] = _copy(value)
-            continue
-        inherited = merged[key]
-        if isinstance(value, Mapping) and isinstance(inherited, Mapping):
-            merged[key] = _merge(inherited, value, roles=roles, prefix=path)
-            continue
-        if value == inherited:
-            continue
-        role = roles.get(path[0])
-        if role is None:
-            raise _refusal("no_role", path=".".join(path))
-        if role is Role.CONTENT:
-            raise _refusal("content_conflict", path=".".join(path), base=inherited, overlay=value)
-        merged[key] = _copy(value)
-    return merged
 
 
 def merge_layers(
@@ -420,7 +446,16 @@ def merge_layers(
         Fault: two layers set one ``CONTENT`` field differently (``content_conflict``, with the path and both
             values), or a differing field declares no role (``no_role``).
     """
-    return _merge(base, overlay, roles=roles, prefix=())
+
+    def refuse(path: tuple[str, ...], inherited: Any, value: Any) -> None:
+        """A differing leaf is refused when its role forbids the difference."""
+        role = roles.get(path[0])
+        if role is None:
+            raise _refusal("no_role", path=".".join(path))
+        if role is Role.CONTENT:
+            raise _refusal("content_conflict", path=".".join(path), base=inherited, overlay=value)
+
+    return deep_merge(base, overlay, on_diff=refuse)
 
 
 def pipeline[ModelT: BaseModel](
@@ -463,16 +498,13 @@ def pipeline[ModelT: BaseModel](
     if overrides and base is None:
         raise _refusal("no_base")
     document = read(path, schema_id=schema_id)
-    draft = resolve(document, model, path_fields=path_fields)
+    draft = resolve(document, model, rows=path_fields)
     if overrides and base is not None:
         draft = apply(draft, overrides, base=base)
-    try:
-        validated = validate(draft)
-    except ValidationError as exc:
-        raise config_error(
-            exc,
-            model=model,
-            source=str(path),
-            overrides=[f"{override.path}={override.value!r}" for override in overrides],
-        ) from exc
+    validated = validate_or_fault(
+        draft,
+        model=model,
+        source=str(path),
+        overrides=[f"{override.path}={override.value!r}" for override in overrides],
+    )
     return Applied(model=validated, overrides=tuple(overrides), payload=identity_of(validated))
