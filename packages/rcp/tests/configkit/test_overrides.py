@@ -414,7 +414,7 @@ def test_pipeline_refuses_an_invalid_override_in_validate_after_apply(tmp_path: 
         pipeline(path, _Run, base=tmp_path, overrides=parse(["judge.concurrency=not-a-number"]))
     problem = caught.value.details["errors"][0]
     assert problem["field"] == "judge.concurrency"
-    assert problem["expected"] == "int"
+    assert problem["expected"] == "integer"
     # H2: the override is what set the bad value, so it is what the refusal blames -- not the file.
     assert problem["source"] == "--set"
     assert caught.value.message.startswith("--set judge.concurrency:")

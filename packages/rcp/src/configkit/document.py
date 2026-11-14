@@ -32,10 +32,9 @@ import json
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from types import UnionType
-from typing import TYPE_CHECKING, Any, Final, Literal, Union, get_args, get_origin
+from typing import TYPE_CHECKING, Any, Final
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from configkit.faults import Fault, OSErrorFault, require
 from configkit.identity import canonical_bytes
@@ -242,7 +241,14 @@ def _mapping(path: Path, yaml_hint: str) -> dict[str, Any]:
     return dict(payload)
 
 
-def _merged(path: Path, chain: tuple[Path, ...], *, extends: bool, yaml_hint: str) -> dict[str, Any]:
+def _merged(
+    path: Path,
+    chain: tuple[Path, ...],
+    *,
+    extends: bool,
+    yaml_hint: str,
+    on_file: Callable[[dict[str, Any], Path], dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     """*path*'s mapping with its ``extends`` chain merged under it, and *chain* the files already read."""
     resolved = path.resolve()
     if resolved in chain:
@@ -253,6 +259,8 @@ def _merged(path: Path, chain: tuple[Path, ...], *, extends: bool, yaml_hint: st
         )
     payload = _mapping(path, yaml_hint)
     base_ref = payload.pop(_EXTENDS, None)
+    if on_file is not None:
+        payload = on_file(payload, path.parent)
     if base_ref is None:
         return payload
     if not extends:
@@ -264,7 +272,7 @@ def _merged(path: Path, chain: tuple[Path, ...], *, extends: bool, yaml_hint: st
         raise _refuse(f"config {path}: `extends` names one path, got {base_ref!r}", path=str(path))
     base_path = path.parent / base_ref
     try:
-        base = _merged(base_path, (*chain, resolved), extends=extends, yaml_hint=yaml_hint)
+        base = _merged(base_path, (*chain, resolved), extends=extends, yaml_hint=yaml_hint, on_file=on_file)
     except OSError as exc:
         raise OSErrorFault(
             f"config {path} extends {base_ref!r}, which cannot be read: {exc}",
@@ -280,6 +288,7 @@ def read(
     schema_id: str | None = None,
     extends: bool = True,
     yaml_hint: str = _YAML_HINT,
+    on_file: Callable[[dict[str, Any], Path], dict[str, Any]] | None = None,
 ) -> Document:
     """Read *path* as a document: UTF-8, unique keys, ``extends`` merged under it, the ``schema`` id checked.
 
@@ -291,6 +300,11 @@ def read(
         schema_id: The id the document's ``schema`` key must equal, or ``None`` for no check.
         extends: Whether a top-level ``extends`` is honoured; ``False`` refuses a document that declares one.
         yaml_hint: The install line a missing YAML reader reports, verbatim.
+        on_file: Called as ``on_file(payload, directory)`` on **each** file's own mapping -- the file's
+            ``extends`` key already popped, its base not yet merged under it -- with that file's directory, so a
+            caller's relative values resolve against the file that declares them (the two-base rule). The
+            ordering is the contract: applied after the merge, a base's relative value would resolve against
+            the extending file's directory. ``None`` (the default) reads every file unchanged.
 
     Returns:
         The document, with no value validated and the ``schema`` key recorded on :attr:`Document.schema` rather
@@ -301,9 +315,10 @@ def read(
             is missing or forms a cycle (``value_error``); the document is not a mapping; the ``schema`` id is
             absent or different from *schema_id*; or the YAML reader is absent (``optional.missing``, with
             *yaml_hint*). An absent file is an ``OSError``, which the fault table's generic row classifies.
+            *on_file*'s own exception propagates unchanged: the caller's refusal is the caller's.
     """
     resolved = Path(path).resolve()
-    payload = _merged(resolved, (), extends=extends, yaml_hint=yaml_hint)
+    payload = _merged(resolved, (), extends=extends, yaml_hint=yaml_hint, on_file=on_file)
     declared = payload.pop(_SCHEMA, None)
     if schema_id is not None and declared != schema_id:
         raise _refuse(
@@ -549,27 +564,15 @@ def load[ModelT: BaseModel](
     return validate_or_fault(draft, model=model, source=str(path), field_types=field_types)
 
 
-def _type_name(annotation: Any) -> str | None:
-    """The written form of *annotation*: a reader's word for what the field accepts (``int``, ``str | None``)."""
-    if annotation is None:
-        return None
-    origin = get_origin(annotation)
-    if origin in (Union, UnionType):
-        return " | ".join(filter(None, (_type_name(argument) for argument in get_args(annotation))))
-    if origin is Literal:
-        return "one of " + ", ".join(repr(argument) for argument in get_args(annotation))
-    if origin in (list, tuple, set, frozenset, dict):
-        name = getattr(origin, "__name__", str(origin))
-        arguments = ", ".join(filter(None, (_type_name(argument) for argument in get_args(annotation))))
-        return f"{name}[{arguments}]" if arguments else name
-    if isinstance(annotation, type):
-        return annotation.__name__
-    return str(annotation)
+def _locate(model: Any, loc: Sequence[str]) -> type[BaseModel] | None:
+    """The model *loc* lives in (``None`` when it names no model): the container whose fields the leaf is one of.
 
-
-def _locate(model: type[BaseModel], loc: Sequence[str]) -> tuple[type[BaseModel] | None, Any]:
-    """The model *loc* lives in, and the annotation of the value *loc* names (``None`` when it is unknown)."""
-    container: type[BaseModel] | None = model
+    An index or a key inside a list or mapping of models is not a field name, so the walk continues in the
+    nested model the container's annotation names; an unknown key of a known model is a leaf of that model.
+    A ``TypeAdapter`` declares no field set of its own, so it names no container: its keys are the union
+    members' and the walk's schema is what says which one.
+    """
+    container: type[BaseModel] | None = model if isinstance(model, type) and issubclass(model, BaseModel) else None
     annotation: Any = None
     for index, part in enumerate(loc):
         last = index == len(loc) - 1
@@ -582,13 +585,42 @@ def _locate(model: type[BaseModel], loc: Sequence[str]) -> tuple[type[BaseModel]
         else:
             container = _nested_model(annotation)  # an index or key inside a list or mapping of models
             annotation = None
-    return container, annotation
+    return container
 
 
-def _json_schema(model: type[BaseModel]) -> dict[str, Any]:
-    """*model*'s JSON Schema, or an empty mapping when pydantic cannot build one (only the hints are lost)."""
+def _expected(error: Mapping[str, Any], node: Mapping[str, Any] | None) -> str | list[Any] | None:
+    """The type or the values the value should have had, spelled from the schema node the reader's path reaches.
+
+    pydantic's context names a closed set's members (``'retrieve' or 'calibrate'``), and it is the reader's own
+    word, so it wins. Otherwise the node says it: an ``enum`` or a ``const`` is the closed set, and a union is
+    the types of the members that declare one -- the member pydantic tried, not the whole annotation, which is
+    why a union field reports ``string`` rather than ``JudgeConfig | str | None``. A node with no type (a model)
+    names nothing.
+    """
+    context = error.get("ctx") or {}
+    if "expected" in context:
+        return str(context["expected"])
+    if node is None or error["type"] == "extra_forbidden":
+        return None
+    if "enum" in node:
+        return node["enum"]
+    if "const" in node:
+        return [node["const"]]
+    types = [member.get("type") for member in node.get("anyOf", []) if member.get("type")] or [node.get("type")]
+    names = [name for name in types if name]
+    return " | ".join(names) if names else None
+
+
+def _json_schema(model: Any) -> dict[str, Any]:
+    """*model*'s JSON Schema, or an empty mapping when pydantic cannot build one (only the hints are lost).
+
+    A model class builds one through ``model_json_schema`` and a ``TypeAdapter`` -- a union of models a caller
+    validates as one value -- through ``json_schema``. Both are the schema the walk needs.
+    """
     try:
-        return model.model_json_schema()
+        if hasattr(model, "model_json_schema"):
+            return model.model_json_schema()
+        return model.json_schema()
     except Exception:  # a schema that cannot be built only costs the location hints, never the refusal
         return {}
 
@@ -739,7 +771,7 @@ def _redacted_input(value: Any, container: type[BaseModel] | None, loc: Sequence
 def config_error(
     exc: ValidationError,
     *,
-    model: type[BaseModel],
+    model: type[BaseModel] | TypeAdapter[Any],
     source: str,
     overrides: Sequence[str] = (),
     prefix: str = "",
@@ -758,10 +790,17 @@ def config_error(
     override explains is blamed on the override (``source`` is ``"--set"``) instead of on the file, because a
     ``--set`` typo is not the document's.
 
+    ``expected`` is spelled from the **schema node the reader's path reaches** -- pydantic's own
+    ``ctx["expected"]`` first, then that node's ``enum``, ``const`` or ``anyOf`` types -- never from the field's
+    annotation. The node is what narrows a union to the member pydantic tried (``string``, not
+    ``JudgeConfig | str | None``) and what names the members of a closed set inside a list, where the annotation
+    names no item at all.
+
     Args:
         exc: The ``pydantic.ValidationError`` a document's validation raised.
-        model: The model class that was validated; it supplies the expected types, the known keys and the roles
-            the redaction walks.
+        model: The model class that was validated, or a ``TypeAdapter`` of a union of models; a model class
+            supplies the known keys and the roles the redaction walks (the expected type comes from the walked
+            schema node), and a ``TypeAdapter`` supplies the schema alone.
         source: What was validated (a file path, ``"run config"``), blamed for problems no override explains.
         overrides: The ``dotted.key=value`` overrides applied before validating; a problem one of them set is
             blamed on it.
@@ -780,8 +819,8 @@ def config_error(
     problems: list[dict[str, Any]] = []
     for error in exc.errors(include_url=False):
         walked = [str(part) for part in error["loc"]]
-        loc, _node = _walk(schema, walked)
-        container, annotation = _locate(model, loc)
+        loc, node = _walk(schema, walked)
+        container = _locate(model, loc)
         field = ".".join([prefix, *loc] if prefix else loc) or "<config>"
         known = sorted(container.model_fields) if container is not None else []
         problem: dict[str, Any] = {
@@ -793,7 +832,7 @@ def config_error(
             "known": known,
             "source": "--set" if _set_by(field, set_keys) else source,
         }
-        expected = _type_name(annotation)
+        expected = _expected(error, node)
         if expected is not None:
             problem["expected"] = expected
         if error["type"] == "extra_forbidden":

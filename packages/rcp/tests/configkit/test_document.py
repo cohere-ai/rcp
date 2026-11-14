@@ -288,7 +288,7 @@ def test_config_error_names_the_field_the_expected_type_the_known_keys_and_redac
     fault = config_error(caught.value, model=_Secrets, source="dev.yaml")
     problem = fault.details["errors"][0]
     assert problem["field"] == "secret"
-    assert problem["expected"] == "int"
+    assert problem["expected"] == "integer"
     assert problem["input"] == "<redacted>"
     assert "abc" not in fault.message
     assert "dev.yaml" in fault.message and "secret" in fault.message
@@ -343,6 +343,17 @@ class _Run(BaseModel):
     judge: _Judge
 
 
+class _Steps(BaseModel):
+    """A list of one closed set: the annotation names no item, so only the walked item schema can say what
+    the value should have been."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    IDENTITY_ROLES: ClassVar[dict[str, Any]] = {"steps": Role.CONTENT}
+
+    steps: list[Literal["retrieve", "calibrate"]]
+
+
 def _union_error() -> ValidationError:
     """The one error a union member's bad value raises, at its raw pydantic location."""
     with pytest.raises(ValidationError) as caught:
@@ -361,9 +372,19 @@ def test_a_union_members_tag_is_not_a_field_the_reader_wrote() -> None:
     fault = config_error(exc, model=_Run, source="dev.yaml")
     problem = fault.details["errors"][0]
     assert problem["field"] == "judge.backend.partition"
-    assert problem["expected"] == "int"
+    assert problem["expected"] == "integer"
     assert fault.message.startswith("dev.yaml: judge.backend.partition:")
     assert "did you mean" not in fault.message
+
+
+def test_expected_names_the_choices_of_a_literal_inside_a_list() -> None:
+    """R3: pydantic's context holds the choices and the walk reaches the list's item schema, so a value that is
+    not one of them is refused naming them. Spelled from the annotation, this problem named nothing at all."""
+    with pytest.raises(ValidationError) as caught:
+        _Steps.model_validate({"steps": ["retrieve", "calibrat"]})
+    problem = config_error(caught.value, model=_Steps, source="dev.yaml").details["errors"][0]
+    assert problem["field"] == "steps.1"
+    assert problem["expected"] == "'retrieve' or 'calibrate'"
 
 
 def test_an_override_that_set_the_field_is_blamed_on_the_override() -> None:
@@ -461,6 +482,46 @@ def test_extends_merges_the_base_under_the_child(tmp_path: Path) -> None:
     with pytest.raises(Fault) as caught:
         read(child, extends=False)
     assert "extends" in caught.value.message and "child.yaml" in caught.value.message
+
+
+def test_a_base_configs_relative_value_resolves_against_the_bases_directory(tmp_path: Path) -> None:
+    """R3: the two-base rule -- a base file's relative value resolves against the base's own directory, not the
+    child's, so the hook runs on each file's payload with that file's directory *before* the merge."""
+    _write(tmp_path / "base.yaml", "name: base\npath: rows.jsonl\n")
+    child = _write(tmp_path / "config" / "child.yaml", "extends: ../base.yaml\nname: child\n")
+
+    def rebase(payload: dict[str, Any], directory: Path) -> dict[str, Any]:
+        return {key: str((directory / value).resolve()) if key == "path" else value for key, value in payload.items()}
+
+    assert read(child, on_file=rebase).payload == {"name": "child", "path": str(tmp_path / "rows.jsonl")}
+
+
+def test_a_childs_relative_value_resolves_against_the_childs_directory(tmp_path: Path) -> None:
+    """R3: the same rule for the extending file, and the hook is optional: ``on_file=None`` (the default)
+    reads the files unchanged."""
+    _write(tmp_path / "base.yaml", "name: base\npath: rows.jsonl\n")
+    child = _write(tmp_path / "config" / "child.yaml", "extends: ../base.yaml\nnotes: notes.md\n")
+
+    def rebase(payload: dict[str, Any], directory: Path) -> dict[str, Any]:
+        return {
+            key: str((directory / value).resolve()) if key in {"path", "notes"} else value
+            for key, value in payload.items()
+        }
+
+    assert read(child, on_file=rebase).payload == {
+        "name": "base",
+        "path": str(tmp_path / "rows.jsonl"),
+        "notes": str(tmp_path / "config" / "notes.md"),
+    }
+    assert (
+        read(child, on_file=None).payload
+        == read(child).payload
+        == {
+            "name": "base",
+            "path": "rows.jsonl",
+            "notes": "notes.md",
+        }
+    )
 
 
 def test_a_cycle_is_refused_naming_both_files(tmp_path: Path) -> None:
