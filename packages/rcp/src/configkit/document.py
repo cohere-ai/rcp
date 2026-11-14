@@ -37,7 +37,7 @@ from typing import Any, Final, Literal, Union, get_args, get_origin
 
 from pydantic import BaseModel, ValidationError
 
-from configkit.faults import Fault, require
+from configkit.faults import Fault, OSErrorFault, require
 from configkit.roles import _declares_roles, _model_of, _nested_model, path_fields, redact, roles_of
 
 __all__ = [
@@ -218,7 +218,15 @@ def _merged(path: Path, chain: tuple[Path, ...], *, extends: bool, yaml_hint: st
         )
     if not isinstance(base_ref, str):
         raise _refusal(f"config {path}: `extends` names one path, got {base_ref!r}", path=str(path))
-    base = _merged(path.parent / base_ref, (*chain, resolved), extends=extends, yaml_hint=yaml_hint)
+    base_path = path.parent / base_ref
+    try:
+        base = _merged(base_path, (*chain, resolved), extends=extends, yaml_hint=yaml_hint)
+    except OSError as exc:
+        raise OSErrorFault(
+            f"config {path} extends {base_ref!r}, which cannot be read: {exc}",
+            details={"path": str(path), "base": base_ref, "resolved": str(base_path)},
+            hint=f"create {base_path} or fix the `extends` line in {path}",
+        ) from exc
     return deep_merge(base, payload)
 
 
@@ -319,13 +327,14 @@ def _resolved(value: Any, parts: Sequence[str], base: Path) -> Any:
     return value
 
 
-def _unknown_keys(model: type[BaseModel], payload: Mapping[str, Any]) -> None:
+def _unknown_keys(model: type[BaseModel], payload: Mapping[str, Any], *, source: str) -> None:
     """Refuse a key the model does not declare, when the model forbids extras.
 
     ``model_construct`` drops an unknown top-level key instead of refusing it, so a typo in a document would
     vanish between :func:`resolve` and :func:`validate`; this is the one place that keeps the model's
-    ``extra="forbid"`` a refusal. A nested model's keys need no check here: the nested value is still a mapping
-    when :func:`validate` runs, so pydantic refuses them itself.
+    ``extra="forbid"`` a refusal. The refusal names *source*, the way :func:`config_error` names its own, because
+    a reader has to know which file to open. A nested model's keys need no check here: the nested value is still a
+    mapping when :func:`validate` runs, so pydantic refuses them itself.
     """
     if model.model_config.get("extra") != "forbid":
         return
@@ -333,10 +342,12 @@ def _unknown_keys(model: type[BaseModel], payload: Mapping[str, Any]) -> None:
     if unknown:
         known = ", ".join(sorted(model.model_fields))
         raise _refusal(
-            f"{model.__name__} does not declare {', '.join(repr(key) for key in unknown)}; known keys: {known}",
+            f"{source}: {model.__name__} does not declare {', '.join(repr(key) for key in unknown)}; "
+            f"known keys: {known}",
             model=model.__name__,
             unknown=unknown,
             known=sorted(model.model_fields),
+            source=source,
         )
 
 
@@ -369,7 +380,7 @@ def resolve[ModelT: BaseModel](
             ``IDENTITY_ROLES`` declaration (see :func:`configkit.roles.roles_of`).
     """
     payload = document.payload
-    _unknown_keys(model, payload)
+    _unknown_keys(model, payload, source=str(document.path))
     for parts in _path_rows(model, path_fields):
         payload = _resolved(payload, tuple(parts), document.base)
     return model.model_construct(**payload)

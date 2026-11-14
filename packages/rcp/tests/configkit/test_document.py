@@ -315,6 +315,9 @@ def test_an_unknown_key_is_refused_by_the_loader_not_dropped(tmp_path: Path) -> 
         load(path, _Doc)
     assert "'nam'" in caught.value.message
     assert caught.value.details["known"] == ["name", "output", "schema_id", "source"]
+    # M13: the refusal names the file, the way ``config_error`` names its source on every problem.
+    assert "typo.yaml" in caught.value.message
+    assert caught.value.details["source"] == str(path)
 
 
 def test_extends_merges_the_base_under_the_child(tmp_path: Path) -> None:
@@ -342,6 +345,18 @@ def test_a_cycle_is_refused_naming_both_files(tmp_path: Path) -> None:
     with pytest.raises(Fault) as caught:
         read(first)
     assert "first.yaml" in caught.value.message and "second.yaml" in caught.value.message
+
+
+def test_a_missing_extends_base_is_a_fault_naming_the_child_and_the_base(tmp_path: Path) -> None:
+    """M14: a bare ``FileNotFoundError`` named neither the child, the base reference nor the fix."""
+    child = _write(tmp_path / "config" / "child.yaml", "extends: ../missing.yaml\nname: child\n")
+    with pytest.raises(Fault) as caught:
+        read(child)
+    assert caught.value.code == "os_error"
+    assert "child.yaml" in caught.value.message
+    assert "../missing.yaml" in caught.value.message
+    assert caught.value.details["base"] == "../missing.yaml"
+    assert caught.value.hint is not None and "missing.yaml" in caught.value.hint
 
 
 # --- the rest of the module's surface -----------------------------------------------------------------------

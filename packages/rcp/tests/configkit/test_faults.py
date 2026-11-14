@@ -154,3 +154,12 @@ def test_warn_refuses_a_code_outside_the_records_set() -> None:
         warn(_Noticed(model="m", revision="main"), "OTHER")
     with pytest.raises(ValueError, match="WARNING_CODES"):
         warn(_Silent(model="m"), "UNPINNED_REVISION")
+
+
+def test_the_facade_publishes_every_fault_class() -> None:
+    """L18: four of ``faults.__all__``'s names were unreachable from ``configkit``, though four modules import them."""
+    import configkit
+
+    assert set(faults.__all__) <= set(configkit.__all__)
+    for name in faults.__all__:
+        assert getattr(configkit, name) is getattr(faults, name)

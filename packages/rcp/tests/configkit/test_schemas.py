@@ -69,6 +69,14 @@ def test_an_empty_name_is_refused() -> None:
         DocumentId(name=" ", accepted_ids=("rcp.x.v1",), removable="rcp.x.v1")
 
 
+def test_accepted_ids_declared_as_one_string_is_refused_naming_the_field() -> None:
+    """H12: ``tuple("rcp.x.v1")`` exploded into characters, and the refusal named neither the field nor the cause."""
+    with pytest.raises(ValueError) as raised:
+        DocumentId(name="x", accepted_ids="rcp.x.v1", removable="rcp.x.v1")  # type: ignore[arg-type]
+    assert "accepted_ids" in str(raised.value)
+    assert "rcp.x.v1" in str(raised.value)
+
+
 def test_home_of_returns_directory_file_name_and_schema_id() -> None:
     """rcp-46: a cross-command artifact's home and schema id, derived from the record alone."""
     home = home_of(RESULT_RECORD)

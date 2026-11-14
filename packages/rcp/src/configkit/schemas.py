@@ -63,13 +63,18 @@ class DocumentId:
     removable: str
 
     def __post_init__(self) -> None:
-        """Refuse a declaration nobody made: a blank name, no ids, a repeated id, or an unaccepted removable id.
+        """Refuse a declaration nobody made: a blank name, one string, no ids, a repeated id, or a bad removable id.
 
         Raises:
             ValueError: the record is malformed. The message names the field and the value.
         """
         if not isinstance(self.name, str) or not self.name.strip():
             raise ValueError(f"a DocumentId needs a non-empty name, got {self.name!r}")
+        if isinstance(self.accepted_ids, str):
+            raise ValueError(
+                f"{self.name}: accepted_ids is a sequence of schema ids, not the string {self.accepted_ids!r}; "
+                "a string is read one character at a time"
+            )
         ids = tuple(self.accepted_ids)
         if not ids:
             raise ValueError(f"{self.name}: a DocumentId needs at least one accepted schema id")

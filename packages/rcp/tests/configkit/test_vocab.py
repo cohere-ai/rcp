@@ -232,6 +232,14 @@ def test_key_vocabulary_refuses_a_malformed_declaration() -> None:
         KeyVocabulary(name=" ", keys=("a",))
 
 
+def test_a_key_vocabulary_declared_as_one_string_is_refused() -> None:
+    """H11: ``tuple("abc")`` is ``('a', 'b', 'c')``, so a string would enforce a vocabulary nobody declared."""
+    with pytest.raises(Fault) as raised:
+        KeyVocabulary(name="model.config", keys="abc")  # type: ignore[arg-type]
+    assert "keys" in raised.value.message
+    assert raised.value.details["keys"] == "abc"
+
+
 # ---------------------------------------------------------------------------------------------------------------
 # BudgetKey, GainsKey, cut_for: the numeric fits the library owns (rcp-18, rcp-47)
 # ---------------------------------------------------------------------------------------------------------------

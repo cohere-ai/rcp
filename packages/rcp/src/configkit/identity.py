@@ -50,6 +50,8 @@ from typing import Any, Final
 
 from pydantic import BaseModel
 
+from configkit.faults import ValueErrorFault
+
 __all__ = [
     "SHORT_ID_LENGTH",
     "Identity",
@@ -165,7 +167,7 @@ def hash_payload(payload: Any) -> str:
 def _full_digest(digest: str, *, caller: str) -> str:
     """*digest* if it is a full sha256 hex digest; a refusal naming *caller* otherwise."""
     if len(digest) != 64 or any(character not in _HEX for character in digest):
-        raise ValueError(f"{caller} takes a full sha256 hex digest (64 lowercase hex characters), got {digest!r}")
+        raise ValueErrorFault(f"{caller} takes a full sha256 hex digest (64 lowercase hex characters), got {digest!r}")
     return digest
 
 
@@ -181,11 +183,11 @@ def short(digest: str, length: int = SHORT_ID_LENGTH) -> str:
         The first *length* characters of *digest*.
 
     Raises:
-        ValueError: *digest* is not a full lowercase hex digest, or *length* is outside ``[1, 64]``.
+        ValueErrorFault: *digest* is not a full lowercase hex digest, or *length* is outside ``[1, 64]``.
     """
     _full_digest(digest, caller="short()")
     if not 1 <= length <= 64:
-        raise ValueError(f"short() length must be in [1, 64] characters, got {length}")
+        raise ValueErrorFault(f"short() length must be in [1, 64] characters, got {length}")
     return digest[:length]
 
 
@@ -203,7 +205,7 @@ def combine_digests(*digests: str) -> str:
         The full SHA-256 digest of the parts' bytes, in the order given: 64 lowercase hex characters.
 
     Raises:
-        ValueError: a part is not a full lowercase hex digest.
+        ValueErrorFault: a part is not a full lowercase hex digest.
     """
     combined = hashlib.sha256()
     for digest in digests:
@@ -245,11 +247,11 @@ def identity_chain(*, config: Mapping[str, Any], data: str, model: str, run: str
         The :class:`Identity` record carrying all four parts.
 
     Raises:
-        ValueError: *data* or *model* is not a full lowercase hex digest, or *run* is empty.
+        ValueErrorFault: *data* or *model* is not a full lowercase hex digest, or *run* is empty.
         TypeError: the config payload has a value with no JSON form.
     """
     if not isinstance(run, str) or not run.strip():
-        raise ValueError(f"identity_chain() needs a non-empty run id, got {run!r}")
+        raise ValueErrorFault(f"identity_chain() needs a non-empty run id, got {run!r}")
     return Identity(
         config=hash_payload(config),
         data=_full_digest(data, caller="identity_chain(data=)"),

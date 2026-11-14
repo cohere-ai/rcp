@@ -307,13 +307,19 @@ class KeyVocabulary:
     keys: tuple[str, ...]
 
     def __post_init__(self) -> None:
-        """Refuse a declaration nobody can check: a blank name, no key, a blank key, or a key twice.
+        """Refuse a declaration nobody can check: a blank name, one string, no key, a blank key, or a key twice.
 
         Raises:
             Fault: the declaration is malformed. ``code`` is ``"value_error"`` and the message names the field.
         """
         if not isinstance(self.name, str) or not self.name.strip():
             raise ValueErrorFault(f"a KeyVocabulary needs a non-empty name, got {self.name!r}")
+        if isinstance(self.keys, str):
+            raise ValueErrorFault(
+                f"{self.name}: keys is a sequence of key names, not the string {self.keys!r}; a string is read "
+                "one character at a time, so it would declare a vocabulary nobody wrote",
+                details={"keys": self.keys},
+            )
         keys = tuple(self.keys)
         if not keys:
             raise ValueErrorFault(f"{self.name}: a KeyVocabulary declares at least one key")

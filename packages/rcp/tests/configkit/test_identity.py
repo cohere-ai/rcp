@@ -14,6 +14,7 @@ from dataclasses import FrozenInstanceError
 from pathlib import Path
 
 import pytest
+from configkit.faults import ValueErrorFault
 from configkit.identity import (
     SHORT_ID_LENGTH,
     Identity,
@@ -106,14 +107,14 @@ def test_short_bounds_and_the_default_length() -> None:
 @pytest.mark.parametrize("bad", ["ab", "", "A" * 64, "0" * 63, "0" * 65])
 def test_short_refuses_a_value_that_is_not_a_full_digest(bad: str) -> None:
     """A short value can never be shortened twice: the input is a full lowercase sha256 hex digest."""
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueErrorFault):
         short(bad, 8)
 
 
 @pytest.mark.parametrize("length", [0, 65])
 def test_short_refuses_a_length_outside_the_digest(length: int) -> None:
     """The length is a cut of a 64-character digest, so it is in [1, 64]."""
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueErrorFault):
         short(_digest(), length)
 
 
@@ -127,7 +128,7 @@ def test_combine_digests_is_order_stable() -> None:
 
 def test_combine_digests_refuses_a_part_that_is_not_a_full_digest() -> None:
     """The parts are fixed-width, so ``("ab", "cd")`` cannot hash the same bytes as ``("abcd",)``."""
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueErrorFault):
         combine_digests("ab", "cd")
 
 
@@ -191,9 +192,9 @@ def test_identity_chain_is_frozen_and_refuses_a_bad_part() -> None:
     chain = identity_chain(config={}, data=_digest("data"), model=_digest("model"), run="r")
     with pytest.raises(FrozenInstanceError):
         chain.config = "0" * 64  # type: ignore[misc]
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueErrorFault):
         identity_chain(config={}, data="short", model=_digest("model"), run="r")
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueErrorFault):
         identity_chain(config={}, data=_digest("data"), model="short", run="r")
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueErrorFault):
         identity_chain(config={}, data=_digest("data"), model=_digest("model"), run="")
