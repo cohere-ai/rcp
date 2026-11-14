@@ -26,6 +26,11 @@ Code Name              Class                      What a caller should do
 
 Warnings that a caller may want to branch on are :class:`RcpNdcgWarning` instances with a ``code`` from the
 closed list :data:`WarningCode`; the CLI puts them into the ``warnings`` of its ``--json`` envelope.
+
+The taxonomy's *table* is :mod:`configkit.faults`'s: :data:`_FAULT_ROWS` holds rcp's rows (one per exit code,
+with the code's owner), :func:`~configkit.faults.register_fault_codes` builds and validates the table, and
+:func:`~configkit.faults.exit_codes` holds the code -> exit-number map. rcp keeps the class names, the numbers and
+the hints (a public surface 244 modules import); the library owns the shape and the checking.
 """
 
 from __future__ import annotations
@@ -34,7 +39,9 @@ import os
 import sys
 from collections.abc import Mapping
 from enum import IntEnum
-from typing import Any, ClassVar, Literal, get_args
+from typing import Any, ClassVar, Literal, cast, get_args
+
+from configkit import faults
 
 
 class ExitCode(IntEnum):
@@ -345,22 +352,89 @@ def dependency_error(module: str, *, needed_for: str = "this step") -> Dependenc
     )
 
 
+#: rcp's rows of the fault taxonomy: ``(class, code, owner)``, one per exit code. A code is its exit code's
+#: name, lowercased (``"config"`` for :class:`ConfigError`), and each code names the *root* of its family only:
+#: a subclass keeps its parent's code (:class:`BackendUnavailableError` is a provider failure, exit 6).
+#: :func:`configkit.faults.register_fault_codes` validates the rows and appends the library's generic ones behind
+#: them, so the table is the library's and the rows are rcp's.
+_FAULT_ROWS: tuple[tuple[type[RcpNdcgError], str, str], ...] = (
+    (RcpNdcgError, "internal", "rcp"),
+    (UsageError, "usage", "rcp"),
+    (ConfigError, "config", "rcp"),
+    (MissingInputError, "missing_input", "rcp"),
+    (CredentialsError, "credentials", "rcp"),
+    (ProviderError, "provider", "rcp"),
+    (CapabilityError, "capability", "rcp"),
+    (Interrupted, "interrupted", "rcp"),
+    (DependencyError, "dependency", "rcp"),
+    (IdentityError, "identity", "rcp"),
+    (DataError, "data", "rcp"),
+)
+
+#: The merged taxonomy: rcp's rows in front of the library's generic ones, as
+#: :func:`configkit.faults.register_fault_codes` returns it (a code declared twice, or a row without an owner, is
+#: refused there -- at import, not at the first refusal).
+_FAULT_CODES = faults.register_fault_codes(_FAULT_ROWS)
+
+#: The code -> process-exit-code table: rcp's numbers, validated and copied by
+#: :func:`configkit.faults.exit_codes` (a code with no owner, or a number that is not an int, is refused there).
+_EXIT_CODES = faults.exit_codes({code: int(cls.exit_code) for cls, code, _owner in _FAULT_ROWS})
+
+#: The rcp class a fault code names: the rows rcp owns, and the library's ``optional.missing``, which is rcp's
+#: :class:`DependencyError` (the refusal :func:`dependency_error` raises, with the caller's install line).
+_CLASS_FOR_CODE: dict[str, type[RcpNdcgError]] = {
+    **{code: cast("type[RcpNdcgError]", cls) for cls, code, owner in _FAULT_CODES if owner == "rcp"},
+    faults.OptionalDependencyMissing.code: DependencyError,
+}
+
+
 def error_class(exit_code: int) -> type[RcpNdcgError] | None:
     """The error class whose exit code is ``exit_code`` (``None`` for a code no class uses, e.g. a signal's).
 
     A caller that ran an ``rcp`` command as a child process raises the child's failure as its own class.
     """
-    classes = (RcpNdcgError, *_subclasses(RcpNdcgError))
-    return next((cls for cls in classes if int(cls.exit_code) == exit_code and exit_code != 0), None)
+    for cls, code, _owner in _FAULT_ROWS:
+        if _EXIT_CODES[code] == exit_code:
+            return cls
+    return None
 
 
-def _subclasses(cls: type[RcpNdcgError]) -> list[type[RcpNdcgError]]:
-    """The public error classes below ``cls`` (a class keeps its parent's code only through inheritance)."""
-    found = []
-    for sub in cls.__subclasses__():
-        if sub.__module__ == __name__:
-            found += [sub, *_subclasses(sub)]
-    return found
+class _RcpFault(faults.Fault):
+    """An rcp refusal carried through the library's ``Fault`` channel, so the exact instance comes back.
+
+    :func:`classify` returns an :class:`RcpNdcgError` (the CLI and the MCP envelope read its ``exit_code`` and
+    :meth:`RcpNdcgError.to_dict`), and :func:`configkit.faults.classify`'s mapper is typed to return a
+    :class:`~configkit.faults.Fault`. This carrier is the one adapter between the two: it holds the error object
+    itself, so a subclass's ``retryable`` and ``details`` survive the round trip unchanged.
+    """
+
+    def __init__(self, error: RcpNdcgError) -> None:
+        super().__init__(
+            error.message, code=error.code.lower(), details=error.details, hint=error.hint, cli_hint=error.cli_hint
+        )
+        self.error = error
+
+
+def _fault_of(exc: BaseException) -> faults.Fault:
+    """The rcp error a foreign exception maps to, as the library's ``Fault`` (:func:`classify`'s mapper)."""
+    return _RcpFault(_foreign_error(exc))
+
+
+def _rcp_error(fault: faults.Fault) -> RcpNdcgError:
+    """A library refusal as rcp's class of the same code, so a caller catching ``RcpNdcgError`` catches it too.
+
+    A code rcp does not declare is an unexpected failure (exit 1), the same place an unrecognised foreign
+    exception lands.
+    """
+    klass = _CLASS_FOR_CODE.get(fault.code)
+    if klass is None:
+        return RcpNdcgError(
+            f"{type(fault).__name__}: {fault.message}",
+            hint=fault.hint,
+            details=fault.details,
+            cli_hint=fault.cli_hint,
+        )
+    return klass(fault.message, hint=fault.hint, details=fault.details, cli_hint=fault.cli_hint)
 
 
 def _named(exc: BaseException | None, module: str, *names: str) -> bool:
@@ -379,8 +453,10 @@ def _named(exc: BaseException | None, module: str, *names: str) -> bool:
 def classify(exc: BaseException) -> RcpNdcgError:
     """Map any exception onto the typed surface.
 
-    Deliberate failures (:class:`RcpNdcgError`) pass through unchanged. Foreign exceptions are mapped only where
-    their type says unambiguously what the caller should do:
+    Deliberate failures (:class:`RcpNdcgError`) pass through unchanged, and a refusal the library raises (a
+    :class:`configkit.faults.Fault`, whose codes are the library's) becomes rcp's class of the same code: the
+    taxonomy is one table, so a caller catching :class:`RcpNdcgError` catches every refusal whichever package
+    raised it. Foreign exceptions are mapped only where their type says unambiguously what the caller should do:
 
     * a missing file is :class:`MissingInputError`; a missing optional module is :class:`DependencyError`;
     * a config that does not parse or validate (``yaml``, ``pydantic``) is :class:`ConfigError`;
@@ -407,6 +483,12 @@ def classify(exc: BaseException) -> RcpNdcgError:
     """
     if isinstance(exc, RcpNdcgError):
         return exc
+    fault = faults.classify(exc, mapper=_fault_of)
+    return fault.error if isinstance(fault, _RcpFault) else _rcp_error(fault)
+
+
+def _foreign_error(exc: BaseException) -> RcpNdcgError:
+    """The rcp error a *foreign* exception maps to (the body :func:`classify` delegates to the library)."""
     name = f"{type(exc).__name__}: {exc}"
     if isinstance(exc, KeyboardInterrupt):
         return Interrupted("interrupted", hint="the state on disk is consistent: re-run the command to resume")

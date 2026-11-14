@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from configkit.faults import Fault, OptionalDependencyMissing
 from pydantic import BaseModel, ValidationError
 
 import rcp
@@ -83,6 +84,53 @@ def test_typed_errors_pass_through_unchanged() -> None:
     original = errors.IdentityError("config changed", details={"differing": ["judge.model"]})
 
     assert classify(original) is original
+
+
+def test_a_library_fault_reaches_a_caller_as_the_rcp_class_of_its_code() -> None:
+    """R1: the taxonomy is ``configkit.faults``'s, so a refusal the library raises comes back as rcp's class of
+    the same code -- a caller catching ``RcpNdcgError`` catches every refusal, and the exit number stays rcp's."""
+    fault = Fault("the config file names no schema", code="config", details={"path": "run.yaml"}, hint="add it")
+
+    error = classify(fault)
+
+    assert type(error) is errors.ConfigError
+    assert int(error.exit_code) == 3
+    assert error.details == {"path": "run.yaml"}
+    assert error.hint == "add it"
+
+
+def test_an_absent_extra_from_the_library_is_the_dependency_error() -> None:
+    """The library's ``optional.missing`` is rcp's :class:`DependencyError`, and its hint is the caller's install
+    line, never one the library baked in."""
+    fault = OptionalDependencyMissing(
+        "s3fs is not installed; pip install 'cohere-rcp[s3]'", hint='pip install "cohere-rcp[s3]"'
+    )
+
+    error = classify(fault)
+
+    assert type(error) is errors.DependencyError
+    assert error.exit_code is ExitCode.DEPENDENCY
+    assert error.hint == 'pip install "cohere-rcp[s3]"'
+
+
+def test_every_rcp_exit_code_round_trips_through_a_library_fault() -> None:
+    """The code table is built through the library's ``register_fault_codes``/``exit_codes``: every exit code rcp
+    names (SUCCESS names no class) maps back to its own class and number."""
+    for code in ExitCode:
+        if code is ExitCode.SUCCESS:
+            continue
+        error = classify(Fault("x", code=code.name.lower()))
+        assert error.exit_code is code, code.name
+        assert type(error) is errors.error_class(int(code)), code.name
+
+
+def test_a_bare_value_error_is_still_an_internal_bug_not_a_config_error() -> None:
+    """An existing caller's mapping does not move with the delegation: the foreign mapper is still rcp's, so a
+    ``ValueError`` is a bug (exit 1), not a config to fix (exit 3)."""
+    error = classify(ValueError("operands could not be broadcast together"))
+
+    assert type(error) is RcpNdcgError
+    assert error.exit_code is ExitCode.INTERNAL
 
 
 def test_the_error_object_has_the_envelope_shape() -> None:
