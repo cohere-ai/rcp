@@ -1,0 +1,214 @@
+"""One canonical form, one digest, one chain: the bytes three repositories already hash.
+
+A digest is a claim -- *these two things are interchangeable* -- and it is only a claim while the serialiser is
+the same one everywhere. The canonical form here is not invented: ``rcp_core._hashing`` and
+``emb_eval_contracts.identity`` both produce it, and they agree byte for byte:
+
+    json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
+        .encode("utf-8")
+
+:func:`canonical_bytes` is that call, :func:`hash_payload` is SHA-256 over it, and ``tests/configkit/
+fixtures/identity_vectors.json`` records both implementations' output for a corpus, so a dropped ``sort_keys`` or
+an added ``default=`` fails a test rather than a stored digest. The payload is JSON-native data (``str``, ``int``,
+``float``, ``bool``, ``None``, a list or tuple, a mapping with ``str`` keys): a value with no JSON form is refused
+by :mod:`json` itself, because a ``str()`` fallback puts a memory address in a key that then changes between
+processes.
+
+The module hashes with :mod:`hashlib` and imports no ``rcp_core``: the library is the successor, not a client.
+``rcp_core`` and ``emb_eval_contracts.identity`` re-export these functions after the extraction and keep no copy;
+until then the recorded fixture is the guard.
+
+:data:`SHORT_ID_LENGTH` is rcp's length today (16), and it is the *default*, not a policy: emb-eval passes 12 and
+8 to the same :func:`short`.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from collections.abc import Mapping
+from dataclasses import dataclass
+from types import MappingProxyType
+from typing import Any, Final
+
+from pydantic import BaseModel
+
+__all__ = [
+    "SHORT_ID_LENGTH",
+    "Identity",
+    "canonical_bytes",
+    "hash_payload",
+    "short",
+    "combine_digests",
+    "identity_chain",
+    "freeze",
+]
+
+#: The short length rcp displays today, in characters; a caller passes its own to :func:`short`.
+SHORT_ID_LENGTH: Final[int] = 16
+
+#: The characters a full sha256 hex digest is made of; a truncated or upper-case value is refused.
+_HEX: Final[frozenset[str]] = frozenset("0123456789abcdef")
+
+
+def canonical_bytes(payload: Any) -> bytes:
+    """The exact bytes every digest in this library is taken over: sorted keys, no whitespace, UTF-8.
+
+    Args:
+        payload: JSON-native data: ``str``, ``int``, ``float``, ``bool``, ``None``, a list or tuple, or a mapping
+            whose keys are ``str``. A pydantic model is not serialised here: pass ``model_dump()`` (the caller
+            decides the encoder, and ``roles.identity_of`` already returns JSON-native data).
+
+    Returns:
+        The canonical UTF-8 bytes of *payload*.
+
+    Raises:
+        TypeError: a value has no JSON form (an arbitrary object, a ``set``, ``bytes``). There is no ``default=``
+            fallback: ``str(value)`` would put a repr in a digest.
+        ValueError: a float is ``NaN`` or infinite, which JSON has no form for and ``NaN != NaN`` would make an
+            identity that never matches itself.
+    """
+    return json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    ).encode("utf-8")
+
+
+def hash_payload(payload: Any) -> str:
+    """The full SHA-256 digest of *payload*'s canonical bytes.
+
+    Args:
+        payload: JSON-native data; see :func:`canonical_bytes`.
+
+    Returns:
+        The digest as 64 lowercase hex characters.
+
+    Raises:
+        TypeError: a value has no JSON form.
+        ValueError: a float is ``NaN`` or infinite.
+    """
+    return hashlib.sha256(canonical_bytes(payload)).hexdigest()
+
+
+def _full_digest(digest: str, *, caller: str) -> str:
+    """*digest* if it is a full sha256 hex digest; a refusal naming *caller* otherwise."""
+    if len(digest) != 64 or any(character not in _HEX for character in digest):
+        raise ValueError(f"{caller} takes a full sha256 hex digest (64 lowercase hex characters), got {digest!r}")
+    return digest
+
+
+def short(digest: str, length: int = SHORT_ID_LENGTH) -> str:
+    """A truncated digest, for a human-facing display or a bounded name component.
+
+    Args:
+        digest: A full sha256 hex digest: 64 lowercase hex characters. A short value is refused, so a short can
+            never be shortened twice and quietly claim to be a shorter identity than it is.
+        length: The cut, in characters; the default is :data:`SHORT_ID_LENGTH` (16).
+
+    Returns:
+        The first *length* characters of *digest*.
+
+    Raises:
+        ValueError: *digest* is not a full lowercase hex digest, or *length* is outside ``[1, 64]``.
+    """
+    _full_digest(digest, caller="short()")
+    if not 1 <= length <= 64:
+        raise ValueError(f"short() length must be in [1, 64] characters, got {length}")
+    return digest[:length]
+
+
+def combine_digests(*digests: str) -> str:
+    """One digest from several, in order: a run's identity from its parts.
+
+    Each part is a full 32-byte digest, so the concatenation cannot run two parts together (``"ab"`` and
+    ``"cd"`` would otherwise hash the same bytes as ``"abcd"``); the same parts in the same order always give the
+    same digest, and a different order gives a different one.
+
+    Args:
+        *digests: Full sha256 hex digests (64 lowercase hex characters each).
+
+    Returns:
+        The full SHA-256 digest of the parts' bytes, in the order given: 64 lowercase hex characters.
+
+    Raises:
+        ValueError: a part is not a full lowercase hex digest.
+    """
+    combined = hashlib.sha256()
+    for digest in digests:
+        combined.update(bytes.fromhex(_full_digest(digest, caller="combine_digests()")))
+    return combined.hexdigest()
+
+
+@dataclass(frozen=True)
+class Identity:
+    """One run's identity: the four parts a key is built from (emb-train 13, emb-eval S16/X7).
+
+    Attributes:
+        config: The full sha256 hex digest of the config payload (64 lowercase hex characters).
+        data: The data fingerprint: a full sha256 hex digest.
+        model: The model identity: a full sha256 hex digest.
+        run: The run id, the caller's tags composed into one name (a non-empty string; not a digest).
+    """
+
+    config: str
+    data: str
+    model: str
+    run: str
+
+
+def identity_chain(*, config: Mapping[str, Any], data: str, model: str, run: str) -> Identity:
+    """The four parts of one run's identity, in one call.
+
+    The chain is where a run's key is *derived* rather than defaulted: the config mapping is hashed here, so a
+    changed CONTENT value is a different chain, and the three values the caller already holds are validated
+    rather than trusted.
+
+    Args:
+        config: The CONTENT payload to hash (``roles.identity_of``'s mapping, or any JSON-native mapping).
+        data: The data fingerprint: a full sha256 hex digest (64 lowercase hex characters).
+        model: The model identity: a full sha256 hex digest.
+        run: The run id: a non-empty string, the caller's tags composed into one name.
+
+    Returns:
+        The :class:`Identity` record carrying all four parts.
+
+    Raises:
+        ValueError: *data* or *model* is not a full lowercase hex digest, or *run* is empty.
+        TypeError: the config payload has a value with no JSON form.
+    """
+    if not isinstance(run, str) or not run.strip():
+        raise ValueError(f"identity_chain() needs a non-empty run id, got {run!r}")
+    return Identity(
+        config=hash_payload(config),
+        data=_full_digest(data, caller="identity_chain(data=)"),
+        model=_full_digest(model, caller="identity_chain(model=)"),
+        run=run,
+    )
+
+
+def freeze(value: Any) -> Any:
+    """An identity artifact with every container frozen, at every depth (rcp-29).
+
+    A model is already frozen as a record, but a list inside it is not: ``model.list.append(...)`` changes the
+    artifact after it was recorded. This walks the value and replaces each container, so the artifact is data that
+    cannot change -- a model becomes a read-only mapping of its fields (extras included), a mapping a
+    :class:`types.MappingProxyType`, and a list or tuple a tuple.
+
+    Args:
+        value: The artifact to freeze: a model, a mapping, a sequence, or a scalar.
+
+    Returns:
+        The frozen form: read-only mappings and tuples at every depth, a scalar unchanged.
+    """
+    if isinstance(value, BaseModel):
+        fields = {name: freeze(getattr(value, name)) for name in type(value).model_fields}
+        fields.update({name: freeze(item) for name, item in (value.__pydantic_extra__ or {}).items()})
+        return MappingProxyType(fields)
+    if isinstance(value, Mapping):
+        return MappingProxyType({key: freeze(item) for key, item in value.items()})
+    if isinstance(value, (list, tuple)):
+        return tuple(freeze(item) for item in value)
+    return value

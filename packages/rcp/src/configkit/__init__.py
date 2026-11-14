@@ -35,6 +35,16 @@ from configkit.faults import (
     require,
     warn,
 )
+from configkit.identity import (
+    SHORT_ID_LENGTH,
+    Identity,
+    canonical_bytes,
+    combine_digests,
+    freeze,
+    hash_payload,
+    identity_chain,
+    short,
+)
 from configkit.overrides import (
     VALUE_ERRORS,
     Override,
@@ -61,6 +71,15 @@ from configkit.ports import (
     once,
 )
 from configkit.roles import Role, identity_of, local_inputs, path_fields, redact, roles_of
+from configkit.schemas import (
+    ArtifactHome,
+    DocumentId,
+    SchemaRegistry,
+    SchemaTagged,
+    accepted_schema_ids,
+    home_of,
+    registry,
+)
 from configkit.spec import Brand, FrozenSpec, OperationOptions, OptionSchema, frozen_mapping, frozen_sequence
 
 __all__ = [
@@ -86,6 +105,15 @@ __all__ = [
     "warn",
     "classify",
     "require",
+    # identity.py
+    "SHORT_ID_LENGTH",
+    "Identity",
+    "canonical_bytes",
+    "hash_payload",
+    "short",
+    "combine_digests",
+    "identity_chain",
+    "freeze",
     # overrides.py
     "Override",
     "parse",
@@ -116,6 +144,14 @@ __all__ = [
     "path_fields",
     "redact",
     "local_inputs",
+    # schemas.py
+    "SchemaTagged",
+    "DocumentId",
+    "SchemaRegistry",
+    "registry",
+    "accepted_schema_ids",
+    "ArtifactHome",
+    "home_of",
     # spec.py
     "Brand",
     "FrozenSpec",

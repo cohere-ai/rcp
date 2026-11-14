@@ -1,0 +1,113 @@
+{
+  "recorded_with": [
+    "rcp_core._hashing.canonical_json and rcp_core._hashing.hash_payload",
+    "emb_eval_contracts.identity.canonical_json and emb_eval_contracts.identity.hash_payload"
+  ],
+  "agreement": "both implementations produced identical canonical text and digest for every vector before this file was written",
+  "vectors": [
+    {
+      "name": "sorted-keys",
+      "payload": {
+        "b": 1,
+        "a": 2,
+        "c": [
+          3,
+          {
+            "z": null,
+            "y": true
+          }
+        ]
+      },
+      "canonical": "{\"a\":2,\"b\":1,\"c\":[3,{\"y\":true,\"z\":null}]}",
+      "digest": "3a1e2cd30d11255fb97672fded7e47e1efc414f15c76bf84c142d65c94426863"
+    },
+    {
+      "name": "empty",
+      "payload": {},
+      "canonical": "{}",
+      "digest": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    },
+    {
+      "name": "scalar",
+      "payload": 7,
+      "canonical": "7",
+      "digest": "7902699be42c8a8e46fbbb4501726517e86b22c56a189f7625a6da49081b2451"
+    },
+    {
+      "name": "text-utf8",
+      "payload": {
+        "name": "naïve café 東京",
+        "n": 1
+      },
+      "canonical": "{\"n\":1,\"name\":\"naïve café 東京\"}",
+      "digest": "38e2b970293def33b1f85b8948cbf72ca9d388c23ebe9878d167cf4dbc096c60"
+    },
+    {
+      "name": "floats",
+      "payload": {
+        "integral": 1.0,
+        "fraction": 0.1,
+        "negative": -2.5,
+        "count": 1
+      },
+      "canonical": "{\"count\":1,\"fraction\":0.1,\"integral\":1.0,\"negative\":-2.5}",
+      "digest": "6ee5272de066031ed62beda03bbf132736bee0d60cc81c0e9f444382daa8d985"
+    },
+    {
+      "name": "nested-lists",
+      "payload": [
+        [
+          1,
+          2
+        ],
+        [],
+        [
+          {
+            "a": "b"
+          }
+        ]
+      ],
+      "canonical": "[[1,2],[],[{\"a\":\"b\"}]]",
+      "digest": "4a82dda0450412ab895122e773b1d26c45d3ba6f79a559cfbaea929c6ce4744b"
+    },
+    {
+      "name": "tuple",
+      "payload": [
+        "a",
+        1,
+        null
+      ],
+      "canonical": "[\"a\",1,null]",
+      "digest": "0ae764bffd3a17b6454c8d9ebf712311d9b92efce67a4e4ea4f095fc05ed0122"
+    },
+    {
+      "name": "none",
+      "payload": null,
+      "canonical": "null",
+      "digest": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+    },
+    {
+      "name": "booleans",
+      "payload": {
+        "on": true,
+        "off": false
+      },
+      "canonical": "{\"off\":false,\"on\":true}",
+      "digest": "78abe65e4700bc783332116e77b065bcfd7f66774b47fb6bd456110313757b66"
+    },
+    {
+      "name": "override-payload",
+      "payload": {
+        "metric": "ndcg@10",
+        "runtime": {
+          "seed": 7
+        },
+        "data": {
+          "queries": 3
+        }
+      },
+      "canonical": "{\"data\":{\"queries\":3},\"metric\":\"ndcg@10\",\"runtime\":{\"seed\":7}}",
+      "digest": "edef4594530d647a68ca00edea961d437485d050d300af9a791217c8f6cf4736"
+    }
+  ]
+}
