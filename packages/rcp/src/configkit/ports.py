@@ -7,7 +7,8 @@ library module calls -- ``storage`` takes ``Ports.atomic`` and ``Ports.uri``, ne
 
 ``logger``/``configure``/``once`` are the log facade (rcp-35): the library creates loggers and installs no
 handler until ``configure`` is called, so importing it changes nothing about the host's logging, and dedup is a
-parameter rather than a policy.
+parameter rather than a policy. The facade's state is a :class:`LogState` the record carries, so two records
+never share a handler or a dedup key (M2).
 
 ``Tensor`` is typing-only: it names the array shape the numeric fits read, and this module imports no engine
 (emb-train 29).
@@ -18,7 +19,7 @@ from __future__ import annotations
 import logging
 import threading
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -27,6 +28,7 @@ __all__ = [
     "Budget",
     "Clock",
     "ExitCodeTable",
+    "LogState",
     "Ports",
     "Renderer",
     "Sink",
@@ -135,6 +137,24 @@ class Tensor(Protocol):
         ...
 
 
+@dataclass
+class LogState:
+    """One record's log facade state: the root, the handler it installed, the dedup keys and the lock.
+
+    ``Ports`` carries one per record, so no two records share a handler or a dedup key. The logging module's
+    logger for a root is process-wide -- that is the logging module's contract, not the facade's state -- so what
+    this record owns is the handler it installed and the keys it has seen.
+
+    Attributes:
+        root: The logger root every logger the facade hands out sits under.
+    """
+
+    root: str = "configkit"
+    _handler: logging.Handler | None = field(default=None, init=False, repr=False)
+    _seen: set[str] = field(default_factory=set, init=False, repr=False)
+    _lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
+
+
 @dataclass(frozen=True)
 class Ports:
     """Every host service one library call may need, injected by the consumer (the library builds no graph).
@@ -147,6 +167,7 @@ class Ports:
         renderer: The front end's renderer for a command result.
         atomic: The atomic-write seam: one file, one swap.
         uri: The URI reader/writer seam, routed by scheme by the implementation.
+        log: The log facade's state: one per record, so no two records share a handler.
     """
 
     clock: Clock
@@ -156,92 +177,90 @@ class Ports:
     renderer: Renderer
     atomic: AtomicWriter
     uri: UriIO
+    log: LogState = field(default_factory=LogState)
 
 
-#: The library's own logger root: every logger the facade hands out sits under it, and nothing else is touched.
-_LOGGER_NAME = "configkit"
-
+#: The one line format ``configure`` installs: level, logger name, message.
 _FORMAT = "%(levelname)s %(name)s: %(message)s"
-
-_LOCK = threading.Lock()
-
-#: The handler the last ``configure`` installed, so a second call replaces it instead of stacking a second one.
-_HANDLER: logging.Handler | None = None
-
-#: The keys ``once`` has seen, for the process's lifetime.
-_SEEN: set[str] = set()
 
 
 class _SinkHandler(logging.Handler):
     """The one handler ``configure`` installs: format the record, dedup it by key, hand the line to the sink."""
 
-    def __init__(self, sink: Sink, *, dedup_key: Callable[[Any], str] | None) -> None:
+    def __init__(self, state: LogState, sink: Sink, *, dedup_key: Callable[[Any], str] | None) -> None:
         super().__init__()
+        self._state = state
         self._sink = sink
         self._dedup_key = dedup_key
 
     def emit(self, record: logging.LogRecord) -> None:
         """One record as one sink call; a sink that raises is reported by the logging module, never to the caller."""
         try:
-            if self._dedup_key is not None and not once(self._dedup_key(record)):
+            if self._dedup_key is not None and not once(self._state, self._dedup_key(record)):
                 return
             self._sink(self.format(record))
         except Exception:  # a log line must never break the call it describes
             self.handleError(record)
 
 
-def logger(name: str) -> logging.Logger:
-    """The logger for *name*, under the library's ``configkit`` logger (the prefix is added once).
+def logger(state: LogState, name: str) -> logging.Logger:
+    """The logger for *name*, under *state*'s root (the prefix is added once).
 
     Args:
+        state: The record's log state; its root is the one every logger sits under.
         name: A module's ``__name__`` or a subsystem name.
 
     Returns:
         The logger. No handler is installed by this call.
     """
-    if name == _LOGGER_NAME or name.startswith(f"{_LOGGER_NAME}."):
+    root = state.root
+    if name == root or name.startswith(f"{root}."):
         return logging.getLogger(name)
-    return logging.getLogger(f"{_LOGGER_NAME}.{name}")
+    return logging.getLogger(f"{root}.{name}")
 
 
-def configure(sink: Sink, *, level: str = "INFO", dedup_key: Callable[[Any], str] | None = None) -> None:
-    """Send the library's records to *sink*, replacing the handler a previous ``configure`` installed.
+def configure(
+    state: LogState, sink: Sink, *, level: str = "INFO", dedup_key: Callable[[Any], str] | None = None
+) -> None:
+    """Send the library's records to *sink*, replacing the handler this *state* installed before.
 
     No handler is installed at import; this call is the only place the library touches logging, and it never
-    touches the root logger or another library's loggers.
+    touches the root logger or another library's loggers. The handler it installs is remembered on *state*, so a
+    second record's ``configure`` removes nothing of this one's.
 
     Args:
+        state: The record's log state: the root it writes under, and the handler this call replaces.
         sink: Receives each formatted line.
         level: The minimum level, by name (``"DEBUG"``, ``"INFO"``, ...).
         dedup_key: When given, a record whose ``dedup_key(record)`` was already emitted is dropped.
     """
-    global _HANDLER
-    with _LOCK:
-        package = logging.getLogger(_LOGGER_NAME)
-        if _HANDLER is not None:
-            package.removeHandler(_HANDLER)
-        handler = _SinkHandler(sink, dedup_key=dedup_key)
+    with state._lock:
+        package = logging.getLogger(state.root)
+        if state._handler is not None:
+            package.removeHandler(state._handler)
+        handler = _SinkHandler(state, sink, dedup_key=dedup_key)
         handler.setFormatter(logging.Formatter(_FORMAT))
         handler.setLevel(level)
         package.addHandler(handler)
         package.setLevel(level)
-        _HANDLER = handler
+        state._handler = handler
 
 
-def once(key: str) -> bool:
-    """True the first time *key* is seen in this process, False every later time.
+def once(state: LogState, key: str) -> bool:
+    """True the first time *key* is seen in *state*, False every later time in that state.
 
-    The primitive behind ``configure(dedup_key=...)``: a caller emits a once-per-process notice without holding
+    The primitive behind ``configure(dedup_key=...)``: a caller emits a once-per-record notice without holding
     the state itself.
 
     Args:
+        state: The record's log state, which holds the keys already seen.
         key: The dedup key (a code, a path, a message template's identity).
 
     Returns:
-        Whether *key* is new.
+        Whether *key* is new to *state*.
     """
-    with _LOCK:
-        if key in _SEEN:
+    with state._lock:
+        if key in state._seen:
             return False
-        _SEEN.add(key)
+        state._seen.add(key)
         return True

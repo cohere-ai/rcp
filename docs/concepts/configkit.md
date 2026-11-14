@@ -595,14 +595,18 @@ class AtomicWriter(Protocol): ...  # write(path, data) as one atomic swap (rcp 3
 class UriIO(Protocol): ...         # read(uri) / write(uri, data), routed by scheme (rcp 38)
 class Tensor(Protocol): ...      # typing-only; imports nothing (emb-train 29)
 
+@dataclass
+class LogState:                  # the facade's state, one per record (M2)
+    root: str                    # the root every logger the facade hands out sits under
+
 @dataclass(frozen=True)
 class Ports:
     clock: Clock; budget: Budget; sink: Sink; exit_codes: ExitCodeTable
-    renderer: Renderer; atomic: AtomicWriter; uri: UriIO
+    renderer: Renderer; atomic: AtomicWriter; uri: UriIO; log: LogState
 
-def logger(name: str) -> logging.Logger                                              # the one log facade
-def configure(sink: Sink, *, level: str, dedup_key: Callable[[Any], str] | None = None) -> None
-def once(key: str) -> bool
+def logger(log: LogState, name: str) -> logging.Logger                               # the one log facade
+def configure(log: LogState, sink: Sink, *, level: str, dedup_key: Callable[[Any], str] | None = None) -> None
+def once(log: LogState, key: str) -> bool
 ```
 
 rcp requirement 3 asks for **one ports module that names every host service the framework needs**. Five rcp names
@@ -615,9 +619,10 @@ and then omitted the two services its own storage module calls.
 **No graph.** The library names the seam and builds nothing (emb-train 22). A consumer injects the assembly.
 
 **A log facade, and no `print`** (rcp 35; emb-train 31). Round 1 mis-stated rcp 35 as a hint rule; it is about a
-logger. `logger(name)`, `configure(sink, *, level, dedup_key)` and `once(key)` live here: one configurable sink, no
-handler installed at import, and once-per-key dedup as a parameter. `support/logging.py` is the model; it installs
-no handler at import except the run-log exception, and that exception moves to `storage`. `annotation/annotate.py:51`
+logger. `logger(log, name)`, `configure(log, sink, *, level, dedup_key)` and `once(log, key)` live here. They read
+`Ports.log`, one state per record, so two records share no handler and no dedup key (M2). One configurable sink,
+no handler installed at import, and dedup as a parameter. `support/logging.py` is the model; it installs no
+handler at import except the run-log exception, and that exception moves to `storage`. `annotation/annotate.py:51`
 calls `print` today.
 
 ### `plugins.py` — one lookup, one registration door that can refuse

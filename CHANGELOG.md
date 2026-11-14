@@ -84,6 +84,14 @@ it imports the standard library and `pydantic` only: no `rcp`, `rcp_core` or `rc
 at import time, and no file or environment read at import time. `packages/rcp/tests/configkit/test_isolation.py`
 scans every file of the package and proves the same rule at run time from an extracted copy.
 
+The library's log facade takes its state as an argument: `LogState` is one small record (the root, the handler
+`configure` installed, the dedup keys and the lock), `Ports` carries one per record as `Ports.log`, and
+`logger(log, name)`, `configure(log, sink, *, level, dedup_key)` and `once(log, key)` read it. The three module
+globals they replace (`_HANDLER`, `_SEEN`, `_LOCK`) were the one hidden global state in a library whose every other
+seam is a `Ports` field: a second consumer's `configure` removed the first consumer's handler, and a dedup key was
+seen once per process instead of once per record. Still no public name: `configkit` is in no `PUBLIC_MODULES`
+entry, so `tests/contract/snapshots/` does not move.
+
 ### Dependencies
 
 The lock carries the windows the shipped engine release (`vllm` `v0.33.0`, the tag the serving image is built

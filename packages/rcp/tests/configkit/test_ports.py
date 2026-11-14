@@ -2,7 +2,8 @@
 
 The library names the seam and builds no graph (emb-train 22): a consumer injects its clock, budget, log sink,
 exit-code table, renderer, atomic writer and URI reader/writer. ``logger``/``configure``/``once`` are the log
-facade -- the library creates loggers and installs no handler until ``configure`` is called (rcp-35).
+facade -- the library creates loggers and installs no handler until ``configure`` is called (rcp-35) -- and the
+state they read is a ``LogState`` the record carries (M2), so two records never share a handler or a dedup key.
 """
 
 from __future__ import annotations
@@ -15,7 +16,10 @@ from dataclasses import FrozenInstanceError
 from pathlib import Path
 
 import pytest
-from configkit.ports import Ports, configure, logger, once
+from configkit.ports import LogState, Ports, configure, logger, once
+
+#: The logger roots this module configures: the library's default, and the brand a test passes.
+_ROOTS = ("configkit", "acme")
 
 
 class _Clock:
@@ -71,7 +75,7 @@ class _Uri:
 
 
 def _ports(sink: _Sink) -> Ports:
-    """A ``Ports`` record filled with the module's fakes."""
+    """A ``Ports`` record filled with the module's fakes, and a fresh log state of its own."""
     return Ports(
         clock=_Clock(),
         budget=_Budget(),
@@ -86,19 +90,29 @@ def _ports(sink: _Sink) -> Ports:
 @pytest.fixture(autouse=True)
 def _restore_handlers() -> Iterator[None]:
     """Undo whatever ``configure`` installed, so one test's sink never sees another's records."""
-    package = logging.getLogger("configkit")
-    before = list(package.handlers)
+    before = {name: list(logging.getLogger(name).handlers) for name in _ROOTS}
     yield
-    for handler in list(package.handlers):
-        if handler not in before:
-            package.removeHandler(handler)
+    for name, installed in before.items():
+        package = logging.getLogger(name)
+        for handler in list(package.handlers):
+            if handler not in installed:
+                package.removeHandler(handler)
 
 
-def test_ports_carries_the_seven_services_and_is_frozen() -> None:
-    """rcp-3: one record naming every host service, and a consumer cannot swap one in place."""
+def test_ports_carries_every_service_and_the_log_state_and_is_frozen() -> None:
+    """rcp-3, M2: one record naming every host service and the facade's state; nothing can be swapped in place."""
     sink = _Sink()
     ports = _ports(sink)
-    assert set(Ports.__dataclass_fields__) == {"clock", "budget", "sink", "exit_codes", "renderer", "atomic", "uri"}
+    assert set(Ports.__dataclass_fields__) == {
+        "clock",
+        "budget",
+        "sink",
+        "exit_codes",
+        "renderer",
+        "atomic",
+        "uri",
+        "log",
+    }
     # L19: the record is exercised through the fakes, so a field that carries nothing reddens this test.
     assert ports.clock.now() == 0.0
     assert ports.budget.check() is None
@@ -107,6 +121,8 @@ def test_ports_carries_the_seven_services_and_is_frozen() -> None:
     assert ports.renderer(1) == "1"
     assert isinstance(ports.atomic, _Atomic)
     assert ports.uri.read("file:///x") == b""
+    assert isinstance(ports.log, LogState)
+    assert once(ports.log, "test_ports.field") is True
     with pytest.raises(FrozenInstanceError):
         ports.clock = _Clock()
 
@@ -130,27 +146,28 @@ def test_importing_the_module_installs_no_handler(tmp_path: Path) -> None:
 
 def test_configure_sends_the_librarys_records_to_the_sink() -> None:
     """One configured sink, and the library's own records reach it."""
-    sink = _Sink()
-    configure(sink, level="INFO")
-    logger("configkit.ports").warning("hello")
+    sink, state = _Sink(), LogState()
+    configure(state, sink, level="INFO")
+    logger(state, "configkit.ports").warning("hello")
     assert sink.lines == ["WARNING configkit.ports: hello"]
 
 
 def test_configure_replaces_the_handler_it_installed() -> None:
     """A second ``configure`` leaves one handler, so a consumer can reconfigure in place."""
+    state = LogState()
     first, second = _Sink(), _Sink()
-    configure(first)
-    configure(second)
-    logger("faults").info("once")
+    configure(state, first)
+    configure(state, second)
+    logger(state, "faults").info("once")
     assert first.lines == []
     assert second.lines == ["INFO configkit.faults: once"]
 
 
 def test_configure_dedups_by_key() -> None:
     """The dedup key is a parameter: a repeated key is dropped, a new one is not."""
-    sink = _Sink()
-    configure(sink, dedup_key=lambda record: record.getMessage())
-    log = logger("configkit.ports")
+    sink, state = _Sink(), LogState()
+    configure(state, sink, dedup_key=lambda record: record.getMessage())
+    log = logger(state, "configkit.ports")
     log.info("same")
     log.info("same")
     log.info("other")
@@ -159,11 +176,41 @@ def test_configure_dedups_by_key() -> None:
 
 def test_once_is_true_only_the_first_time() -> None:
     """The primitive behind the dedup: one key, one ``True``."""
-    assert once("test_ports.once.first") is True
-    assert once("test_ports.once.first") is False
+    state = LogState()
+    assert once(state, "test_ports.once.first") is True
+    assert once(state, "test_ports.once.first") is False
 
 
 def test_logger_prefixes_once() -> None:
-    """A module name lands under the library's logger, and a name that already carries the prefix is kept."""
-    assert logger("faults").name == "configkit.faults"
-    assert logger("configkit.roles").name == "configkit.roles"
+    """A module name lands under the facade's root, and a name that already carries the prefix is kept."""
+    state = LogState()
+    assert logger(state, "faults").name == "configkit.faults"
+    assert logger(state, "configkit.roles").name == "configkit.roles"
+
+
+def test_two_records_do_not_share_the_facades_state() -> None:
+    """M2: the state is the record's, not the process's -- two ``Ports`` carry two states and two key sets.
+
+    Red on the module globals: ``once`` read one process-wide set, so the second record's key was already seen.
+    """
+    first, second = _ports(_Sink()), _ports(_Sink())
+    assert first.log is not second.log
+    assert once(first.log, "test_ports.shared") is True
+    assert once(first.log, "test_ports.shared") is False
+    assert once(second.log, "test_ports.shared") is True
+
+
+def test_a_second_records_configure_leaves_the_firsts_handler_installed() -> None:
+    """M2: each record remembers the handler it installed, so a second record's ``configure`` removes nothing.
+
+    Red on the module global ``_HANDLER``: the second call removed the first record's handler, so the first
+    record's sink received nothing. Both states share the default root here, and the logging module's logger for
+    a root is process-wide -- what the facade owns per record is the handler it installed on it.
+    """
+    first_sink, second_sink = _Sink(), _Sink()
+    first, second = _ports(first_sink), _ports(second_sink)
+    configure(first.log, first_sink)
+    configure(second.log, second_sink)
+    logger(first.log, "configkit.ports").warning("first")
+    assert first_sink.lines == ["WARNING configkit.ports: first"]
+    assert second_sink.lines == ["WARNING configkit.ports: first"]  # one root, one logger: both handlers see it
