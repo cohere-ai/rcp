@@ -16,6 +16,7 @@ from collections.abc import Iterator
 from typing import Any, Literal
 
 import click
+from configkit.commands import index
 from pydantic import BaseModel, Field
 
 from rcp.cli.command import CommandSpec
@@ -194,13 +195,18 @@ def command_index() -> CommandIndex:
 
 
 def command_specs() -> dict[str, CommandSpec]:
-    """Every declared command (:func:`rcp.cli.command.command`) by path, all command modules loaded."""
-    specs = {}
-    for path, cmd in walk():
-        spec = getattr(cmd, "spec", None)
-        if isinstance(spec, CommandSpec):
-            specs[path.removeprefix("rcp ")] = spec
-    return specs
+    """Every declared command (:func:`rcp.cli.command.command`) by path, all command modules loaded.
+
+    The paths are the library's names (:func:`configkit.commands.index`): a path declared twice is refused there
+    rather than one of the two silently replacing the other in the mapping.
+    """
+    found = [
+        (path.removeprefix("rcp "), spec)
+        for path, cmd in walk()
+        if isinstance(spec := getattr(cmd, "spec", None), CommandSpec)
+    ]
+    index([spec.command for _, spec in found])
+    return dict(found)
 
 
 __all__ = [

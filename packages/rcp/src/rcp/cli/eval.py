@@ -133,8 +133,9 @@ _DEFAULT_FIELDS = ("protocol", "gains_source", "metrics", "k", "summary", "per_d
 class _MetricOption(click.Option):
     """``--metric``'s help names the metrics registered when it is printed, a plugin included.
 
-    The command builder renders a request field's static description; a metric plugin is installed after the
-    command is built, so the registered names are read here, at help time, rather than frozen into the text.
+    The adapter renders a request field's static description; a metric plugin is installed after the command is
+    built, so the registered names are read here, at help time, rather than frozen into the text. The command
+    passes this class to :func:`rcp.cli.command.command` (``option_classes``), so the flag is rendered once.
     """
 
     def get_help_record(self, ctx: click.Context) -> tuple[str, str] | None:
@@ -286,6 +287,7 @@ def _score_text(report: EvalScoreResult) -> str:
     result=EvalScoreResult,
     output_schema="rcp.eval-score.v1",
     text=_score_text,
+    option_classes={"--metric": _MetricOption},
 )
 def eval_score(request: EvalScoreRequest) -> EvalScoreResult:
     """Score rankings with RCP-nDCG and qrel-nDCG under the suite's scoring protocol (plain for a non-suite dataset).
@@ -330,23 +332,6 @@ def eval_score(request: EvalScoreRequest) -> EvalScoreResult:
         storage.write_text(request.out, report.to_json(indent=2))
     values = {name: getattr(report, name) for name in selected if name in EvalReport.model_fields}
     return EvalScoreResult(**values, out=request.out if "out" in selected else None)
-
-
-def _registered_metric_help(command: click.Command) -> None:
-    """Replace the built ``--metric`` option with one whose help reads the registry at print time."""
-    for index, parameter in enumerate(command.params):
-        if isinstance(parameter, click.Option) and "--metric" in parameter.opts:
-            command.params[index] = _MetricOption(
-                ["--metric", "metric"],
-                type=parameter.type,
-                required=parameter.required,
-                multiple=parameter.multiple,
-                default=parameter.default,
-                help=parameter.help,
-            )
-
-
-_registered_metric_help(eval_score)
 
 
 class EvalCompareRequest(BaseModel):

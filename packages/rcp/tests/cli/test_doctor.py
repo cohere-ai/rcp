@@ -8,7 +8,9 @@ from pathlib import Path
 
 from click.testing import CliRunner
 
-from rcp.cli.doctor import doctor_cmd
+from rcp.cli.command import execute
+from rcp.cli.doctor import _facts, doctor_cmd
+from rcp.cli.introspect import command_specs
 
 ROOT = Path(__file__).resolve().parents[4]
 
@@ -148,3 +150,17 @@ def test_doctor_reports_the_alternative_key_variables() -> None:
     reported = _reported_variables()
     assert set(CohereEmbeddings.API_KEY_ENV) <= reported
     assert set(GeminiEmbeddings.API_KEY_ENV) <= reported
+
+
+def test_the_report_is_built_from_the_librarys_doctor_facts() -> None:
+    """The facts are one record (:class:`configkit.commands.DoctorFacts`): the report names every distribution it
+    asked for (a missing one as ``None``), the installed versions come from the record, and the directories and
+    credential variables are the record's."""
+    facts = _facts()
+    report = execute(command_specs()["doctor"], {}).result
+
+    assert report.cache_dir == str(facts.cache_dir) and report.runs_dir == str(facts.runs_dir)
+    assert report.versions == {dist: facts.distributions.get(dist) for dist in report.versions}
+    reported = [check.name.removeprefix("$") for check in report.checks if check.name.startswith("$")]
+    assert reported == list(facts.credential_variables)
+    assert facts.pinned_sibling is None  # the product compares the installed sibling, it does not read the pin

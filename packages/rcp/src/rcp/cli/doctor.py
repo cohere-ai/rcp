@@ -14,6 +14,7 @@ import platform
 from typing import Literal
 
 import click
+from configkit.commands import DoctorFacts
 from pydantic import BaseModel, Field
 
 from rcp.cli.command import command
@@ -40,6 +41,12 @@ _CREDENTIALS = (
     "GOOGLE_API_KEY",
     "HF_TOKEN",
 )
+
+#: The distributions the report names, in report order.
+_DISTRIBUTIONS = ("cohere-rcp", "cohere-rcp-core", "pydantic", "click", "torch")
+
+#: The sibling distribution whose version must equal this distribution's.
+_SIBLING = "cohere-rcp-core"
 
 Status = Literal["ok", "missing", "fail"]
 
@@ -87,6 +94,24 @@ def _installed(module: str) -> bool:
         return importlib.util.find_spec(module) is not None
     except (ImportError, ValueError):
         return False
+
+
+def _facts() -> DoctorFacts:
+    """What the environment holds, as the library's :class:`~configkit.commands.DoctorFacts` record.
+
+    ``distributions`` holds the installed distributions only: the report names every distribution it asked for,
+    and a missing one is ``None`` there, which is the difference between "not installed" and a version.
+    ``pinned_sibling`` is ``None``: this package compares the *installed* sibling with its own version rather than
+    reading the version it pins, because the installed pair is what a run actually executes.
+    """
+    return DoctorFacts(
+        distributions={dist: version for dist in _DISTRIBUTIONS if (version := _version(dist)) is not None},
+        pinned_sibling=None,
+        extras={extra: f'pip install "cohere-rcp[{extra}]"' for extra in _EXTRAS},
+        credential_variables=_CREDENTIALS,
+        cache_dir=cache_dir(),
+        runs_dir=runs_dir(),
+    )
 
 
 def _models_url(url: str) -> str:
@@ -220,16 +245,17 @@ def _text(report: DoctorReport) -> str:
 @command("doctor", request=DoctorRequest, result=DoctorReport, text=_text)
 def doctor(request: DoctorRequest) -> DoctorReport:
     """Check the environment: versions, installed extras, directories, credentials present, endpoint reachable."""
-    versions = {dist: _version(dist) for dist in ("cohere-rcp", "cohere-rcp-core", "pydantic", "click", "torch")}
+    facts = _facts()
+    versions = {dist: facts.distributions.get(dist) for dist in _DISTRIBUTIONS}
     checks = []
-    if versions["cohere-rcp"] is not None and versions["cohere-rcp-core"] != versions["cohere-rcp"]:
+    if versions["cohere-rcp"] is not None and versions[_SIBLING] != versions["cohere-rcp"]:
         checks.append(
             Check(
-                name="cohere-rcp-core",
+                name=_SIBLING,
                 status="fail",
                 detail=(
-                    f"cohere-rcp {versions['cohere-rcp']} needs cohere-rcp-core "
-                    f"{versions['cohere-rcp']}, found {versions['cohere-rcp-core']}"
+                    f"cohere-rcp {versions['cohere-rcp']} needs {_SIBLING} "
+                    f"{versions['cohere-rcp']}, found {versions[_SIBLING]}"
                 ),
             )
         )
@@ -239,10 +265,10 @@ def doctor(request: DoctorRequest) -> DoctorReport:
             Check(
                 name=f"extra [{extra}]",
                 status="missing" if absent else "ok",
-                detail=f'not installed: {", ".join(absent)} (pip install "cohere-rcp[{extra}]")' if absent else "",
+                detail=f"not installed: {', '.join(absent)} ({facts.extras[extra]})" if absent else "",
             )
         )
-    for variable in _CREDENTIALS:
+    for variable in facts.credential_variables:
         present = bool(os.environ.get(variable))
         checks.append(
             Check(name=f"${variable}", status="ok" if present else "missing", detail="set" if present else "")
@@ -254,8 +280,8 @@ def doctor(request: DoctorRequest) -> DoctorReport:
         python=platform.python_version(),
         platform=platform.platform(),
         versions=versions,
-        cache_dir=str(cache_dir()),
-        runs_dir=str(runs_dir()),
+        cache_dir=str(facts.cache_dir),
+        runs_dir=str(facts.runs_dir),
         checks=checks,
     )
 

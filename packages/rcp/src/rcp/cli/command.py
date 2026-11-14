@@ -7,12 +7,14 @@ A command is declared once::
         '''List the runs under a runs directory, newest first.'''
         return RunList(...)
 
-The decorator builds the click options from the request model's fields (a flag is a field, so the MCP input
-schema is the same model), adds ``--json``, calls the function, renders the result as text or as the
-``rcp.cli.v1`` envelope (:mod:`rcp.cli.output`), and maps every exception through
-:func:`rcp.errors.classify` onto a typed error and its exit code. The declaration is kept as a
-:class:`CommandSpec` on the click command (``.spec``); :func:`execute` runs it for the CLI and for the MCP
-server alike, and :func:`rcp.cli.introspect.command_specs` collects them all.
+The declaration is the library's :class:`configkit.commands.Command` -- the name, the request and result models,
+the call and the human renderer -- and the decorator adds what this front end needs: a :class:`CommandSpec`
+(the declaration, its output-schema id and its one-line summary) kept on the click command (``.spec``), the click
+parameters rendered from the request's fields by :mod:`rcp.cli.click_adapter` (a flag is a field, so the MCP
+input schema is the same model), and ``--json``. A call renders the result as text or as the ``rcp.cli.v1``
+envelope (:mod:`rcp.cli.output`), and every exception is mapped through :func:`rcp.errors.classify` onto a typed
+error and its exit code. :func:`execute` runs a declaration for the CLI and for the MCP server alike, and
+:func:`rcp.cli.introspect.command_specs` collects them all.
 """
 
 from __future__ import annotations
@@ -20,18 +22,16 @@ from __future__ import annotations
 import re
 import sys
 import time
-import types
-import typing
 import warnings
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from enum import Enum
-from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 import click
+from configkit.commands import Command
 from pydantic import BaseModel, ValidationError
 
+from rcp.cli.click_adapter import json_option, option_params
 from rcp.cli.output import (
     error_document,
     print_error,
@@ -47,25 +47,41 @@ logger = get_logger(__name__)
 
 @dataclass(frozen=True)
 class CommandSpec:
-    """A declared command: what it takes, what it returns and which library call does the work.
+    """A declared command: the library's declaration and the two facts this front end adds to it.
 
     Attributes:
-        name: The command path without the program name (``"data inspect"``).
-        request: The pydantic model of its inputs; its fields are the flags and the MCP input schema.
-        result: The pydantic model of its output, or ``None`` for a free-form JSON document.
-        handler: ``handler(request) -> result``.
+        command: The declaration (:class:`configkit.commands.Command`): the name, the request model of its inputs
+            (its fields are the flags and the MCP input schema), the result model of its output, the call and the
+            human renderer.
         output_schema: The id of the JSON Schema that ``data`` conforms to (``"rcp.run-list.v1"``).
         read_only: Whether the call leaves no artifacts behind.
         summary: The one-line description (help text, MCP tool description).
     """
 
-    name: str
-    request: type[BaseModel]
-    result: type[BaseModel] | None
-    handler: Callable[[Any], Any]
+    command: Command
     output_schema: str
     read_only: bool = True
     summary: str = ""
+
+    @property
+    def name(self) -> str:
+        """The command path without the program name (``"data inspect"``)."""
+        return self.command.name
+
+    @property
+    def request(self) -> type[BaseModel]:
+        """The pydantic model of the inputs: its fields are the flags and the MCP input schema."""
+        return self.command.request
+
+    @property
+    def result(self) -> type[BaseModel] | None:
+        """The pydantic model of the output, or ``None`` for a free-form JSON document."""
+        return self.command.result
+
+    @property
+    def handler(self) -> Callable[[Any], Any]:
+        """``handler(request) -> result``: the library call."""
+        return self.command.run
 
 
 @dataclass
@@ -154,81 +170,15 @@ def execute(spec: CommandSpec, arguments: Mapping[str, Any]) -> Outcome:
     return outcome
 
 
-# ----------------------------------------------------------------------------------------------------------------
-# click options from a request model
-# ----------------------------------------------------------------------------------------------------------------
-
-
-def _unwrap(annotation: Any) -> tuple[Any, bool]:
-    """``(inner type, multiple)`` of a field annotation, with ``None`` removed from unions."""
-    origin = typing.get_origin(annotation)
-    if origin in (typing.Union, types.UnionType):
-        members = [arg for arg in typing.get_args(annotation) if arg is not type(None)]
-        if len(members) == 1:
-            return _unwrap(members[0])
-        raise TypeError(f"cannot build a CLI option for the union {annotation!r}")
-    if origin in (list, tuple, Sequence, set, frozenset):
-        args = [arg for arg in typing.get_args(annotation) if arg is not Ellipsis]
-        return (args[0] if args else str), True
-    return annotation, False
-
-
-def _click_type(inner: Any) -> click.ParamType:
-    if typing.get_origin(inner) is Literal:
-        return click.Choice([str(value) for value in typing.get_args(inner)])
-    if isinstance(inner, type) and issubclass(inner, Enum):
-        return click.Choice([str(member.value) for member in inner])
-    if inner is bool:
-        return click.BOOL
-    if inner is int:
-        return click.INT
-    if inner is float:
-        return click.FLOAT
-    if inner is Path:
-        return click.Path(path_type=str)
-    if inner is str:
-        return click.STRING
-    raise TypeError(f"cannot build a CLI option for the type {inner!r}; give the field a scalar type")
-
-
-def _params(
-    request: type[BaseModel], *, positional: Sequence[str], envvars: Mapping[str, str], hidden: Sequence[str]
-) -> list[click.Parameter]:
-    params: list[click.Parameter] = []
-    for name, info in request.model_fields.items():
-        inner, multiple = _unwrap(info.annotation)
-        click_type = _click_type(inner)
-        required = info.is_required()
-        default = None if required else info.get_default(call_default_factory=True)
-        if isinstance(default, Enum):
-            default = default.value
-        if multiple:
-            default = tuple(default or ())
-        if name in positional:
-            params.append(click.Argument([name], type=click_type, required=required, nargs=-1 if multiple else 1))
-            continue
-        flag = "--" + name.replace("_", "-")
-        common: dict[str, Any] = {
-            "help": info.description,
-            "hidden": name in hidden,
-            "envvar": envvars.get(name),
-            "show_envvar": name in envvars,
-        }
-        if inner is bool and not multiple:
-            decls = [f"{flag}/--no-{flag[2:]}" if default else flag, name]
-            params.append(click.Option(decls, is_flag=True, default=bool(default), show_default=True, **common))
-            continue
-        option: dict[str, Any] = {"type": click_type, "required": required, "multiple": multiple, **common}
-        if not required:  # click treats an explicit default (even None) as a value, which defeats `required`
-            option.update(default=default, show_default=default not in (None, ()))
-        params.append(click.Option([flag, name], **option))
-    return params
-
-
 def _summary(handler: Callable[..., Any]) -> str:
     """The docstring's first paragraph on one line (its continuation indentation collapsed to one space)."""
     doc = (handler.__doc__ or "").strip()
     return " ".join(doc.split("\n\n", 1)[0].split()) if doc else ""
+
+
+def _human_lines(text: Callable[[Any], str]) -> Callable[[Any], Sequence[str]]:
+    """A command's ``text`` renderer as the declaration's human lines: its one string, as one line."""
+    return lambda result: [text(result)]
 
 
 def _render_text(data: Any) -> str:
@@ -266,6 +216,7 @@ def command(
     positional: Sequence[str] = (),
     envvars: Mapping[str, str] | None = None,
     hidden_fields: Sequence[str] = (),
+    option_classes: Mapping[str, type[click.Option]] | None = None,
     read_only: bool = True,
 ) -> Callable[[Callable[[Any], Any]], click.Command]:
     """Declare a command over a library call.
@@ -281,6 +232,8 @@ def command(
         positional: Fields taken as positional arguments.
         envvars: Field name -> environment variable read when the flag is absent (shown in ``--help``).
         hidden_fields: Fields whose options are hidden from ``--help`` (debug switches).
+        option_classes: Flag -> the click option class that renders it, for a flag whose help is not static
+            (``--metric`` reads the metric registry when the help is printed).
         read_only: Whether the call leaves no artifacts behind (MCP ``readOnlyHint``).
 
     Returns:
@@ -294,19 +247,27 @@ def command(
     resolved_schema = output_schema
 
     def decorator(handler: Callable[[Any], Any]) -> click.Command:
-        spec = CommandSpec(
+        declaration = Command(
             name=name,
             request=request,
             result=result,
-            handler=handler,
+            run=handler,
+            human_lines=None if text is None else _human_lines(text),
+        )
+        spec = CommandSpec(
+            command=declaration,
             output_schema=resolved_schema,
             read_only=read_only,
             summary=_summary(handler),
         )
-        params = _params(request, positional=positional, envvars=envvars or {}, hidden=hidden_fields)
-        params.append(
-            click.Option(["--json", "as_json"], is_flag=True, help="Print one rcp.cli.v1 JSON document on stdout.")
+        params = option_params(
+            request,
+            positional=positional,
+            envvars=envvars or {},
+            hidden=hidden_fields,
+            classes=option_classes,
         )
+        params.append(json_option())
 
         def callback(as_json: bool, **values: Any) -> None:
             arguments = {key: list(value) if isinstance(value, tuple) else value for key, value in values.items()}
