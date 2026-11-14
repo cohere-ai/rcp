@@ -139,6 +139,36 @@ class TestResume:
         assert _statuses(manifest)["calibrate"] == "completed"
         assert manifest.step("calibrate").ended_at > recorded.step("calibrate").ended_at
 
+    def test_a_foreign_penalty_in_the_store_identity_refuses_the_resume(self, run_dir: Path) -> None:
+        """QC-3 H4: ``identity.json`` is written by the judging step but is not one of its outputs, so a resume
+        that finds another tournament penalty there skipped the judging step and let calibrate read it. The
+        step must re-run, and the store's own claim gate refuses it before the fit sees the penalty."""
+        recorded = RunManifest.load(run_dir)
+        identity = run_dir / "judgements" / "identity.json"
+        payload = json.loads(identity.read_text(encoding="utf-8"))
+        payload["stages"]["tournament"]["identity"]["bt_l2"] = 3.0
+        identity.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+        assert Pipeline.resume(run_dir).plan()[0] == {"step": "tournament", "status": "would run"}
+        with pytest.raises(IdentityError) as refused:
+            Pipeline.resume(run_dir).run()
+
+        assert "another identity" in refused.value.message
+        # The foreign penalty never reached the fit: the calibration it produced stands as it was.
+        manifest = RunManifest.load(run_dir)
+        assert manifest.step("calibrate").ended_at == recorded.step("calibrate").ended_at
+
+    def test_a_deleted_store_identity_redoes_the_judging(self, run_dir: Path) -> None:
+        """QC-3 H4: with ``identity.json`` deleted the judging step still looked current, and calibrate's
+        ``read_judgements`` raised ``MissingInputError`` for the file the judging step owns. The step re-runs
+        and recreates the claim from the records its stage file already holds (nothing is asked again)."""
+        (run_dir / "judgements" / "identity.json").unlink()
+
+        manifest = Pipeline.resume(run_dir).run()
+
+        assert _statuses(manifest) == dict.fromkeys(STEPS, "completed")
+        assert (run_dir / "judgements" / "identity.json").is_file()
+
     def test_a_missing_output_redoes_its_step(self, run_dir: Path) -> None:
         (run_dir / "metrics" / "report.json").unlink()
         manifest = Pipeline.resume(run_dir).run()

@@ -513,9 +513,32 @@ class Pipeline:
         record = self.manifest.step(step)
         if record is None or not record.succeeded or record.identity_hash != hash_payload(self._identity(step)):
             return False
+        if step in JUDGE_STEPS and not self._store_is_current(step):
+            return False
         if {(r.path, r.sha256) for r in record.inputs} != {(r.path, r.sha256) for r in self._inputs(step)}:
             return False
         return all(_unchanged(ref, self.layout) for ref in record.outputs)
+
+    def _store_is_current(self, step: str) -> bool:
+        """Whether the judgement store still holds what the judging step wrote for *step*.
+
+        The step's outputs are its stage file. ``identity.json`` is one file both stages append their entry to,
+        so it cannot be an output of either: the first stage's recorded hash would go stale when the second
+        claims its entry, and every resume would re-run the first stage. But calibrate reads the family and the
+        tournament's Bradley-Terry penalty from that file, so a step is not current when the store no longer
+        answers for it: a deleted file is recreated by re-running the step (the stage file's records are reused,
+        nothing is asked again), and a foreign penalty makes the step re-run and be refused by the store's own
+        claim gate before the fit reads it (:meth:`rcp.judging.store.JudgementStore.check`).
+        """
+        from rcp_core.irt import Priors
+
+        entry = self._store_claims().get(step)
+        if entry is None:
+            return False
+        # A judging pass always writes the package's default penalty (the one home of that value,
+        # ``judging._plan``); a calibration may declare another, which is a warning about the refit and not a
+        # claim the store makes about the windows it judged.
+        return step != "tournament" or entry["identity"].get("bt_l2") == Priors().bt_l2
 
     @property
     def _first_stage(self) -> str:
