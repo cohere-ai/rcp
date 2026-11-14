@@ -15,8 +15,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
-from configkit.schemas import DocumentId, accepted_schema_ids
+from configkit.schemas import DocumentId
 from rcp_core.schemas import accepted_schema_ids as core_accepted_schema_ids
+
+from rcp.schemas import SchemaTagged, accepted_schema_ids
 
 #: ``packages/rcp/src/rcp``: the product's source tree, the only tree this guard reads.
 PRODUCT = Path(__file__).resolve().parents[2] / "src/rcp"
@@ -85,3 +87,12 @@ def test_schema_literal_names_the_accepted_ids(site: _Site) -> None:
     assert expected == site.members, (
         f"{site.path}:{site.line}: document {site.name!r} computes {expected}, the annotation says {site.members}"
     )
+
+
+def test_the_schema_vocabulary_is_the_librarys() -> None:
+    """``rcp.schemas`` re-exports the library's two vocabulary names -- one class and one function, not a copy --
+    so a caller reads the payload tag and the accepted spellings from the module it already imports."""
+    import configkit.schemas as library
+
+    assert SchemaTagged is library.SchemaTagged
+    assert accepted_schema_ids is library.accepted_schema_ids

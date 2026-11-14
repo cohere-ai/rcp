@@ -38,6 +38,13 @@ def test_the_kinds_cover_configs_artifacts_and_outputs() -> None:
     assert set(kinds.values()) == {"config", "artifact", "cli-output"}
 
 
+def test_the_declared_schema_set_is_pinned() -> None:
+    """Twenty-one documents are declared by name; every other exported schema is a command's output model, added
+    by :func:`rcp.schemas.entries`. A new document is a deliberate addition and lands here."""
+    assert len(schemas.SCHEMAS) == 21
+    assert len({entry.name for entry in schemas.SCHEMAS}) == 21, "a name names one document"
+
+
 def test_a_record_that_names_its_schema_names_its_entry() -> None:
     # A judgement, a manifest, an estimate and an extension carry their schema id; it must be the exported one.
     tagged = 0

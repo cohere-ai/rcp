@@ -18,6 +18,13 @@ of inferring the shape from one example file.
 
 Every property carries a ``description``: the field's own, else the entry for it in its model's ``Attributes:``
 section (which then leaves the model's description). Cross-reference markup is reduced to plain names.
+
+The schema *vocabulary* is :mod:`configkit.schemas`'s: :class:`~configkit.schemas.SchemaTagged` (a payload that
+carries the id of the schema it was written as) and :func:`~configkit.schemas.accepted_schema_ids` (the spellings
+a :class:`~configkit.schemas.DocumentId` record accepts) are re-exported here, so a caller of this package reads
+them from one module. The ``schema_name: Literal[...]`` declarations stay annotations -- pydantic exports them as
+the ``enum`` of each schema's ``schema`` property -- and ``tests/contract/test_schema_literals.py`` pins them
+against both spellings' source.
 """
 
 from __future__ import annotations
@@ -29,6 +36,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from configkit.schemas import SchemaTagged, accepted_schema_ids
 from rcp_core.schemas import LEGACY_SCHEMA_ID_PREFIX, SCHEMA_ID_PREFIX
 from rcp_core.schemas import schema_id as _schema_id
 
@@ -277,6 +285,8 @@ __all__ = [
     "VERSION",
     "SchemaEntry",
     "SchemaKind",
+    "SchemaTagged",
+    "accepted_schema_ids",
     "entries",
     "export",
     "names",
