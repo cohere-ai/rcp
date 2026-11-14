@@ -19,7 +19,6 @@ from __future__ import annotations
 import os
 import posixpath
 import shutil
-import threading
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -317,10 +316,6 @@ def publish_bytes(target: str | Path, payload: bytes, *, mode: int | None = None
     publish(target, lambda tmp: tmp.write_bytes(payload), mode=mode)
 
 
-#: Serialises the fallback umask read (setting and restoring it is not atomic across threads).
-_UMASK_LOCK = threading.Lock()
-
-
 class AtomicReplace:
     """This package's atomic-write seam: write a sibling, then one ``os.replace`` (rcp-36).
 
@@ -357,34 +352,6 @@ class FsspecUri:
     def write(self, uri: str, data: bytes) -> None:
         """Write *data* at *uri*."""
         write_bytes(uri, data)
-
-
-def _umask() -> int:
-    """The process umask, without changing it: the kernel reports it in ``/proc/self/status``; elsewhere it is
-    read by setting and restoring it under a module lock (the stdlib has no getter).
-
-    Setting the process-wide umask to read it is not thread-safe: two callers (a run mirror's flush thread and
-    the main thread) can interleave and leave the process umask at 0, making every later file world-writable.
-    """
-    reported = _umask_from_proc()
-    if reported is not None:
-        return reported
-    with _UMASK_LOCK:
-        current = os.umask(0)
-        os.umask(current)
-    return current
-
-
-def _umask_from_proc() -> int | None:
-    """The ``Umask:`` line of ``/proc/self/status`` in octal, or ``None`` where it is not readable."""
-    try:
-        with open("/proc/self/status", encoding="ascii") as handle:
-            for line in handle:
-                if line.startswith("Umask:"):
-                    return int(line.split()[1], 8)
-    except (OSError, ValueError, IndexError):
-        return None
-    return None
 
 
 __all__ = [
