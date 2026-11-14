@@ -1,0 +1,156 @@
+"""The refusal base, the generic code table, the exit-code seam and the warning channel.
+
+Every deliberate refusal in the library is one :class:`Fault` carrying the five fields the coverage names
+(rcp-32), a stable ``code`` from a data-driven table and no exit number: the number is the consumer's, and
+:func:`exit_codes` is where it enters. :func:`require` names the caller's install line, never a distribution of
+the library's own, and :func:`warn` refuses a code the record did not declare (rcp-31).
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import ClassVar
+
+import configkit.faults as faults
+import pytest
+from configkit.faults import (
+    FAULT_CODES,
+    Fault,
+    classify,
+    exit_codes,
+    register_fault_codes,
+    require,
+    warn,
+)
+from pydantic import BaseModel
+
+
+def test_five_fields() -> None:
+    """rcp-32: the record carries exactly the five fields the coverage names."""
+    assert set(Fault.__annotations__) == {"message", "code", "details", "hint", "cli_hint"}
+
+
+def test_a_raise_carries_code_and_message_and_no_exit_code() -> None:
+    """D3: the code is declared at the raise; the exit number is resolved by the front end, never baked here."""
+    fault = Fault("the file is not UTF-8", code="value_error", details={"path": "a.yaml"}, hint="save it as UTF-8")
+    assert fault.code == "value_error"
+    assert fault.message == "the file is not UTF-8"
+    assert fault.details == {"path": "a.yaml"}
+    assert fault.hint == "save it as UTF-8"
+    assert fault.cli_hint is None
+    assert not hasattr(fault, "exit_code")
+    assert "exit_code" not in Fault.__annotations__
+
+
+def test_the_generic_table_is_the_four_generic_rows() -> None:
+    """L2.3: the library ships the generic rows only, and no consumer code."""
+    assert [(cls, code) for cls, code in FAULT_CODES] == [
+        (OSError, "os_error"),
+        (RuntimeError, "runtime_error"),
+        (ValueError, "value_error"),
+        (ModuleNotFoundError, "optional.missing"),
+    ]
+
+
+def test_every_subclass_is_in_the_table() -> None:
+    """D2: a ``Fault`` subclass carries a code the table declares (the mutation adds one whose code it does not)."""
+    codes = {code for _, code in FAULT_CODES}
+    subclasses = {
+        name: cls
+        for name, cls in vars(faults).items()
+        if isinstance(cls, type) and issubclass(cls, Fault) and cls is not Fault
+    }
+    assert subclasses, "the check is vacuous with no Fault subclass"
+    assert sorted(name for name, cls in subclasses.items() if cls.code not in codes) == []
+
+
+def test_a_duplicated_code_is_refused() -> None:
+    """D1: a code declared twice names two faults, so the table refuses it."""
+    with pytest.raises(ValueError, match="declared twice"):
+        register_fault_codes([(KeyError, "value_error")])
+    with pytest.raises(ValueError, match="declared twice"):
+        register_fault_codes([(KeyError, "config_invalid"), (LookupError, "config_invalid")])
+
+
+def test_register_returns_the_consumer_rows_then_the_generic_ones() -> None:
+    """The table is the caller's value: the consumer's narrow rows first, the generic builtins last."""
+    table = register_fault_codes([(KeyError, "config_invalid")])
+    assert table[0] == (KeyError, "config_invalid")
+    assert table[1:] == FAULT_CODES
+    assert register_fault_codes(()) == FAULT_CODES
+
+
+def test_classify_passes_a_fault_through_and_defers_otherwise() -> None:
+    """One ``classify``: a deliberate fault is itself, anything else is the consumer's mapper's decision."""
+    fault = Fault("boom", code="value_error")
+    assert classify(fault, mapper=lambda exc: Fault("mapped", code="runtime_error")) is fault
+    mapped = classify(KeyError("k"), mapper=lambda exc: Fault(str(exc), code="config_invalid"))
+    assert mapped.code == "config_invalid"
+    assert mapped.message == "'k'"
+
+
+def test_exit_codes_are_the_consumers_integers() -> None:
+    """rcp-5: the library ships no exit number; the consumer's table becomes the library's typed seam."""
+    table = exit_codes({"value_error": 3, "os_error": 4})
+    assert table["value_error"] == 3
+    assert table.get("missing", None) is None
+    with pytest.raises(ValueError, match="not an int"):
+        exit_codes({"value_error": "3"})
+
+
+def test_require_returns_an_installed_module() -> None:
+    """The happy path: an installed module is imported and returned."""
+    module = require("json", hint="the standard library always ships it")
+    assert module.loads('{"a": 1}') == {"a": 1}
+
+
+def test_require_names_the_callers_hint() -> None:
+    """L2.4: the fault's code is ``optional.missing`` and the message carries the caller's line verbatim."""
+    with pytest.raises(Fault) as caught:
+        require("definitely_absent_module", hint="<the-callers-extra>", extra="data")
+    fault = caught.value
+    assert fault.code == "optional.missing"
+    assert "<the-callers-extra>" in fault.message
+    assert fault.hint == "<the-callers-extra>"
+    assert fault.details == {"module": "definitely_absent_module", "extra": "data"}
+
+
+def test_the_library_bakes_no_install_line() -> None:
+    """The install line is the caller's: ``faults.py`` carries no distribution name of its own."""
+    source = Path(str(faults.__file__)).read_text(encoding="utf-8")
+    assert "pip install" not in source
+
+
+class _Noticed(BaseModel):
+    """A record that carries a warning channel: its closed set is declared on the record (rcp-31)."""
+
+    WARNING_CODES: ClassVar[tuple[str, ...]] = ("UNPINNED_REVISION",)
+
+    model: str
+    revision: str
+
+
+class _Silent(BaseModel):
+    """A record with no warning channel declared."""
+
+    model: str
+
+
+def test_warn_emits_one_warning_keyed_by_the_records_code() -> None:
+    """rcp-34: one channel, and the code is one the record declared."""
+    record = _Noticed(model="m", revision="main")
+    with pytest.warns(UserWarning) as caught:
+        warn(record, "UNPINNED_REVISION", revision="main")
+    assert len(caught) == 1
+    warning = caught[0].message
+    assert warning.code == "UNPINNED_REVISION"
+    assert warning.fields["model"] == "m"
+    assert warning.fields["revision"] == "main"
+
+
+def test_warn_refuses_a_code_outside_the_records_set() -> None:
+    """rcp-31: the set is the record's, so an undeclared code is refused here and not at the consumer."""
+    with pytest.raises(ValueError, match="UNPINNED_REVISION"):
+        warn(_Noticed(model="m", revision="main"), "OTHER")
+    with pytest.raises(ValueError, match="WARNING_CODES"):
+        warn(_Silent(model="m"), "UNPINNED_REVISION")

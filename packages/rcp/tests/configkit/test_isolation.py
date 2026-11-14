@@ -14,8 +14,10 @@ of the package in ``tmp_path`` with one bad line appended must produce exactly o
 from __future__ import annotations
 
 import ast
+import importlib.metadata
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -30,8 +32,22 @@ PACKAGE = Path(__file__).resolve().parents[2] / "src/configkit"
 #: The top-level packages the library must never import: the product it ships in, its core and the serving half.
 FORBIDDEN_ROOTS = frozenset({"rcp", "rcp_core", "rcp_vllm"})
 
-#: The only non-stdlib modules an import of the library may load: the ``pydantic`` closure (C1).
-PURITY_ROOTS = frozenset({"pydantic", "pydantic_core", "typing_extensions", "typing_inspection"})
+
+def _pydantic_closure() -> frozenset[str]:
+    """The import names ``pydantic``'s metadata declares, plus ``pydantic`` itself: the C1 allow-list.
+
+    Computed at test time rather than written down: a fixed list false-fails on a lock that does not resolve a
+    dependency (``annotated_types`` arrives with ``from pydantic import BaseModel``, not with a bare
+    ``import pydantic``, whose exports are lazy) and false-passes on one that adds a name. A requirement that
+    belongs to an extra is skipped: it is not on the import path.
+    """
+    names = {"pydantic"}
+    for requirement in importlib.metadata.requires("pydantic") or ():
+        if "extra ==" in requirement:
+            continue
+        names.add(re.split(r"[ <>=!~;\[]", requirement, maxsplit=1)[0].replace("-", "_").lower())
+    return frozenset(names)
+
 
 #: The functions whose first string argument names a module to load.
 _IMPORT_CALLS = frozenset({"__import__", "import_module", "find_spec"})
@@ -218,4 +234,4 @@ def test_a_copy_of_the_package_imports_with_the_pydantic_closure(tmp_path: Path)
     extracted = Path(str(payload["file"]))
     assert extracted.name == "__init__.py", payload["file"]
     assert extracted.parent == copy, payload["file"]
-    assert set(payload["roots"]) <= PURITY_ROOTS, payload["roots"]
+    assert set(payload["roots"]) <= _pydantic_closure(), payload["roots"]
