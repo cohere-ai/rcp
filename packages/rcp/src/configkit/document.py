@@ -39,7 +39,7 @@ from pydantic import BaseModel, ValidationError
 
 from configkit.faults import Fault, OSErrorFault, require
 from configkit.identity import canonical_bytes
-from configkit.roles import _declares_roles, _model_of, _nested_model, path_fields, redact, roles_of
+from configkit.roles import _REDACTED, _declares_roles, _model_of, _nested_model, path_fields, redact, roles_of
 
 if TYPE_CHECKING:  # `overrides` sits above this module and imports it: the record names its type, not its code
     from configkit.overrides import Override
@@ -706,6 +706,17 @@ def _plain(value: Any) -> Any:
     return repr(value)
 
 
+def _redact_strings(value: Any) -> Any:
+    """*value* with every string replaced by the recorded marker, at every depth: the no-roles fallback."""
+    if isinstance(value, str):
+        return _REDACTED
+    if isinstance(value, Mapping):
+        return {str(key): _redact_strings(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_redact_strings(item) for item in value]
+    return value
+
+
 def _redacted_input(value: Any, container: type[BaseModel] | None, loc: Sequence[str]) -> Any:
     """*value* as a problem's ``input``: every ``SECRET`` and ``URI`` field the model declares is redacted."""
     if container is None:
@@ -713,8 +724,9 @@ def _redacted_input(value: Any, container: type[BaseModel] | None, loc: Sequence
     try:
         roles_of(container)
     except Fault:
-        # No declared role means no field the library can name as a secret; audit's A1 check refuses such a model.
-        return _plain(value)
+        # The declaration is malformed, so no field can be named as a secret: redact every string rather than
+        # render the value verbatim. audit's A1 check refuses such a model, and a refusal may not leak one.
+        return _redact_strings(value)
     if loc:
         leaf = loc[-1]
         for name, field in container.model_fields.items():

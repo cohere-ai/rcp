@@ -12,7 +12,7 @@ from typing import Any, ClassVar
 
 import pytest
 from configkit.faults import Fault
-from configkit.roles import Role, identity_of, local_inputs, path_fields, redact, roles_of
+from configkit.roles import Role, identity_of, local_inputs, path_fields, redact, roles_of, safe_url
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -305,10 +305,26 @@ def test_redact_hides_secrets_and_url_credentials() -> None:
     assert payload["token_key"] == "s3cr3t"
 
 
-def test_redact_keeps_a_key_the_model_does_not_declare() -> None:
-    """A key with no declared role is kept unchanged: its role is unknown, so it is not silently dropped."""
-    payload = {"name": "n", "token_key": "s", "base_url": "u", "inner": {}, "extra": "kept"}
-    assert redact(payload, model=_Recorded)["extra"] == "kept"
+def test_redact_redacts_a_key_the_model_does_not_declare() -> None:
+    """H8: an ``extra="allow"`` key is CONTENT to :func:`identity_of`, so it may hold a secret and is redacted.
+
+    The walk kept every undeclared key unchanged ("its role is unknown"), which rendered a secret the model
+    received through ``extra="allow"`` -- the same keys ``identity_of`` treats as part of the identity.
+    """
+    payload = {"name": "n", "token_key": "s", "base_url": "u", "inner": {}, "extra": "s3cr3t"}
+    assert redact(payload, model=_Recorded)["extra"] == "<redacted>"
+    assert redact(payload, model=_Recorded)["name"] == "n"
+
+
+def test_safe_url_is_public_and_strips_a_credentials_and_query() -> None:
+    """H6: the rule was byte-identical to the product's ``safe_url`` but private, so the product kept a copy."""
+    from configkit import roles
+
+    assert "safe_url" in roles.__all__
+    assert safe_url("https://user:token@host.example.com/a/b?x=1#f") == "https://host.example.com/a/b"
+    assert safe_url("https://host.example.com") == "https://host.example.com"
+    assert safe_url("/local/path") == "/local/path"
+    assert safe_url(["https://u:p@h/x?q=1"]) == ["https://h/x"]
 
 
 def test_local_inputs_lists_paths_local_uris_and_environment_names() -> None:

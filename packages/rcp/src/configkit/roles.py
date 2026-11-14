@@ -38,7 +38,7 @@ from pydantic import BaseModel
 
 from configkit.faults import ValueErrorFault
 
-__all__ = ["Role", "identity_of", "local_inputs", "path_fields", "redact", "roles_of"]
+__all__ = ["Role", "identity_of", "local_inputs", "path_fields", "redact", "roles_of", "safe_url"]
 
 #: The recorded form a ``SECRET`` value is replaced with: the marker ``rcp`` writes today, kept so a recorded
 #: config reads the same before and after the move.
@@ -197,7 +197,8 @@ def redact(payload: Any, *, model: type[BaseModel]) -> Any:
     field's key is found by the spelling a dump writes (its serialisation alias). A ``SECRET`` value becomes the
     recorded marker ``"<redacted>"``; a ``URI`` value loses its userinfo, query and fragment while the scheme,
     authority and path stay, so a redacted record still names its store. A nested model is walked by its own
-    declarations, and a key the model does not declare is kept unchanged, because its role is unknown.
+    declarations, and a key the model does not declare is redacted too: an ``extra="allow"`` key is CONTENT to
+    :func:`identity_of`, so it may hold a secret, and "no declared role" is not "no secret".
 
     Args:
         payload: A dump of *model*, or a sub-tree of one (a nested model's dump, a list of dumps).
@@ -210,8 +211,10 @@ def redact(payload: Any, *, model: type[BaseModel]) -> Any:
         return payload
     roles = roles_of(model)
     redacted = dict(payload)
+    declared: set[str] = set()
     for name, field in model.model_fields.items():
         key = field.serialization_alias or field.alias or name
+        declared.add(key)
         if key not in redacted or redacted[key] is None:
             continue
         value = redacted[key]
@@ -219,13 +222,16 @@ def redact(payload: Any, *, model: type[BaseModel]) -> Any:
         if role is Role.SECRET:
             redacted[key] = _REDACTED
         elif role is Role.URI:
-            redacted[key] = _safe_url(value)
+            redacted[key] = safe_url(value)
         else:
             nested = _model_of(field.annotation)
             if nested is not None:
                 redacted[key] = redact(value, model=nested)
             elif _nested_model(field.annotation) is not None:
                 redacted[key] = _redact_nested(value, field.annotation)
+    for key, value in redacted.items():
+        if key not in declared and value is not None:
+            redacted[key] = _REDACTED
     return redacted
 
 
@@ -298,12 +304,23 @@ def _is_remote(location: str) -> bool:
     return bool(separator) and scheme.lower() != "file"
 
 
-def _safe_url(value: Any) -> Any:
-    """*value* with each URL's userinfo, query and fragment stripped; a list is stripped elementwise."""
+def safe_url(value: Any) -> Any:
+    """*value* with each URL's userinfo, query and fragment stripped; a list is stripped elementwise.
+
+    The one URL-redaction rule (rcp's ``redact_urls`` is the other half of it): a URL that reaches a log or a
+    recorded payload names its store without carrying a credential. A value that is not an authority-bearing URL
+    (a bare path) is returned unchanged, and a list is stripped elementwise.
+
+    Args:
+        value: A URL string, a list of them, or any other value (returned unchanged).
+
+    Returns:
+        ``<scheme>://<host[:port]>[/<path>]`` for a URL, elementwise for a list, *value* itself otherwise.
+    """
     if isinstance(value, str):
         return _safe_url_string(value)
     if isinstance(value, (list, tuple)):
-        return [_safe_url(item) for item in value]
+        return [safe_url(item) for item in value]
     return value
 
 

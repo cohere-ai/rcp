@@ -407,6 +407,32 @@ def test_a_caller_supplied_hint_replaces_the_default() -> None:
     assert fault.cli_hint is None
 
 
+class _Broken(BaseModel):
+    """A model whose role declaration is malformed: ``other`` has no Role, so ``roles_of`` refuses it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    IDENTITY_ROLES: ClassVar[dict[str, Any]] = {"token": Role.SECRET}
+
+    token: int
+    other: str = "x"
+
+
+def test_a_malformed_role_declaration_never_renders_the_value() -> None:
+    """H8: a model whose ``IDENTITY_ROLES`` is malformed made the error renderer fall back to the raw value.
+
+    ``_redacted_input`` read a ``roles_of`` refusal as "no field is a secret" and rendered the input verbatim,
+    so a value written for a SECRET field reached the message and ``details``. A refusal may not leak: every
+    string is redacted instead.
+    """
+    with pytest.raises(ValidationError) as caught:
+        _Broken.model_validate({"token": "s3cr3t-value"})
+    fault = config_error(caught.value, model=_Broken, source="dev.yaml")
+    assert fault.details["errors"][0]["input"] == "<redacted>"
+    assert "s3cr3t-value" not in fault.message
+    assert "s3cr3t-value" not in json.dumps(fault.details)
+
+
 # --- extends ------------------------------------------------------------------------------------------------
 
 
