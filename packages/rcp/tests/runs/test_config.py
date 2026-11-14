@@ -526,9 +526,15 @@ class TestJudge:
 
 
 def test_the_shipped_configs_validate() -> None:
-    root = Path(__file__).resolve().parents[4]
-    for path in sorted((root / "configs" / "run").glob("*.yaml")):
-        config = RunConfig.load(path)
+    """FR-G 2 / QC-3 H5: the guard globbed ``<repo>/configs/run``, a directory that never existed, so its loop
+    ran zero times and no shipped config was ever checked. The subject is the packaged run configs, and the
+    expected names are the control: a glob over an empty directory proves nothing."""
+    from rcp.examples import run_config_names, run_config_path
+
+    names = run_config_names()
+    assert names == ["nano_nfcorpus_gpt5", "rejudge_nfcorpus", "tiny"], names
+    for name in names:
+        config = RunConfig.load(run_config_path(name))
         assert isinstance(config.judge, str) and isinstance(config.judge_config(), JudgeConfig)
 
 
