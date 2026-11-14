@@ -124,7 +124,7 @@ from configkit.spec import (
     frozen_mapping,
     frozen_sequence,
 )
-from configkit.storage import RunLayout, lock, publish, publish_bytes, read_uri, write_uri
+from configkit.storage import RunsRoot, lock, publish, publish_bytes, read_uri, write_uri
 from configkit.vocab import (
     BudgetKey,
     Capability,
@@ -259,7 +259,7 @@ __all__ = [
     "lock",
     "read_uri",
     "write_uri",
-    "RunLayout",
+    "RunsRoot",
     # vocab.py
     "Capability",
     "TaskKind",

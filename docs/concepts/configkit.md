@@ -642,7 +642,7 @@ def publish(uri: str, write: Callable[[BinaryIO], None], *, atomic: AtomicWriter
 def lock(path: Path) -> ContextManager[None]        # POSIX requirement documented
 def read_uri(uri: str, *, ports: Ports) -> bytes
 def write_uri(uri: str, data: bytes, *, ports: Ports) -> None
-class RunLayout:                                     # one exported run and step directory layout
+class RunsRoot:                                      # one exported run and step directory layout
     def run_dir(self, run_id: str) -> Path
     def step_dir(self, run_id: str, step: str) -> Path
 ```
@@ -934,7 +934,7 @@ not get from `pipeline` (one line, in that consumer's suite).
 | 21 | a task mapping injected by the caller | `plugins.py` |
 | 22 | an injected run-assembly seam | **not in L** — L builds no optimizer, scheduler or store; `ports.py` names the seam |
 | 23 | one `preflight` that is the only data gate | **not in L** — preflight is a data-domain gate; L has no data. A consumer owns it, and `audit.scan` refuses a second gate in L's source |
-| 24 | one exported run and step directory layout | `storage.py` (`RunLayout`) |
+| 24 | one exported run and step directory layout | `storage.py` (`RunsRoot`) |
 | 25 | a schema registry | `schemas.py` |
 | 26 | a sealed-artifact contract, or an explicit exclusion | **not in L**, explicitly: the artifact schema stays out; L owns the reading and the layout, not the fields |
 | 27 | no import-time side effects | C3 + P3 |

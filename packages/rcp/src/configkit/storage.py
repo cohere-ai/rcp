@@ -12,10 +12,11 @@ Three seams, and none of them assumes the caller's storage (rcp-36, rcp-37, rcp-
     One **advisory lock**, with a documented POSIX requirement: it is ``fcntl.flock``, so it excludes a second
     holder on a POSIX host and refuses to pretend elsewhere. The product hand-writes three of these
     (``judging/store.py``, ``storage/core.py``, ``storage/census.py``); this is the one.
-``RunLayout``
+``RunsRoot``
     One **run and step directory layout** (emb-train 24): a run's directory is ``<root>/<run id>`` and a step's is
     ``<run dir>/<step>``, so a CLI and a store that both name a run's directory cannot disagree. The library owns
-    no repository path, so the root is the caller's.
+    no repository path, so the root is the caller's. It is not called ``RunLayout``: the product has a
+    ``RunLayout`` that is *one run's* directory, and a module importing both would silently get one class.
 ``read_uri``/``write_uri``
     The **storage-URI seam** routes through :attr:`configkit.ports.Ports.uri`, and the library ships the
     ``file://`` handler only. This row is *partial by design* (rcp-38): a ``gs://`` or ``s3://`` handler is a
@@ -41,14 +42,14 @@ from urllib.parse import unquote
 from configkit.faults import OSErrorFault, ValueErrorFault
 from configkit.ports import AtomicWriter, Ports
 
-__all__ = ["RunLayout", "lock", "publish", "publish_bytes", "read_uri", "write_uri"]
+__all__ = ["RunsRoot", "lock", "publish", "publish_bytes", "read_uri", "write_uri"]
 
 #: The one scheme the library serves itself; every other scheme is a consumer's :class:`~configkit.ports.UriIO`.
 _LOCAL_SCHEME = "file"
 
 
 @dataclass(frozen=True)
-class RunLayout:
+class RunsRoot:
     """The one run and step directory layout (emb-train 24), rooted where the caller says.
 
     Attributes:

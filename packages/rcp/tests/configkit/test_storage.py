@@ -19,7 +19,7 @@ from typing import Any
 import pytest
 from configkit.faults import Fault
 from configkit.ports import Ports
-from configkit.storage import RunLayout, lock, publish, publish_bytes, read_uri, write_uri
+from configkit.storage import RunsRoot, lock, publish, publish_bytes, read_uri, write_uri
 
 
 class _Atomic:
@@ -199,25 +199,44 @@ def test_lock_releases_on_an_exception(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------------------------------------------
-# RunLayout: one run and step directory layout (emb-train 24)
+# RunsRoot: one run and step directory layout (emb-train 24)
 # ---------------------------------------------------------------------------------------------------------------
 
 
-def test_run_layout_names_the_run_and_step_directories(tmp_path: Path) -> None:
+def test_runs_root_names_the_run_and_step_directories(tmp_path: Path) -> None:
     """A run's directory is ``<root>/<run id>`` and a step's is ``<run dir>/<step>``, for one reader and one writer."""
-    layout = RunLayout(tmp_path)
+    layout = RunsRoot(tmp_path)
     assert layout.run_dir("run-1") == tmp_path / "run-1"
     assert layout.step_dir("run-1", "embed") == tmp_path / "run-1" / "embed"
 
 
-def test_run_layout_refuses_a_segment_that_escapes_the_root(tmp_path: Path) -> None:
+def test_runs_root_refuses_a_segment_that_escapes_the_root(tmp_path: Path) -> None:
     """A run id or a step carrying a separator is refused: a layout cannot name a directory outside its root."""
-    layout = RunLayout(tmp_path)
+    layout = RunsRoot(tmp_path)
     for segment in ("", "../elsewhere", "a/b", "  "):
         with pytest.raises(Fault):
             layout.run_dir(segment)
     with pytest.raises(Fault):
         layout.step_dir("run-1", "a/b")
+
+
+def test_the_library_layout_and_the_product_layout_are_two_names(tmp_path: Path) -> None:
+    """H7: ``configkit.storage`` and ``rcp.runs.layout`` both defined ``RunLayout``, for two meanings.
+
+    A module that imported both got one class silently: the product's ``RunLayout`` is *one run's* directory,
+    the library's is the directory every run lives under. The library's class is ``RunsRoot``, so both bind in
+    one namespace and each keeps its own meaning.
+    """
+    from configkit.storage import RunsRoot
+
+    from rcp.runs.layout import RunLayout
+
+    assert RunsRoot is not RunLayout
+    assert (RunsRoot.__name__, RunLayout.__name__) == ("RunsRoot", "RunLayout")
+    assert (RunsRoot.__module__, RunLayout.__module__) == ("configkit.storage", "rcp.runs.layout")
+    # The meanings the two names keep apart: the library roots the runs, the product roots one run.
+    assert RunsRoot(tmp_path).run_dir("run-1") == tmp_path / "run-1"
+    assert RunLayout.at(tmp_path).root == str(tmp_path)
 
 
 # ---------------------------------------------------------------------------------------------------------------
