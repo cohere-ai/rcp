@@ -18,7 +18,7 @@ import sys
 from collections.abc import Mapping
 from dataclasses import FrozenInstanceError
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Annotated, Any, ClassVar, Literal
 
 import pytest
 from configkit.document import (
@@ -303,6 +303,108 @@ def test_config_error_names_the_field_the_expected_type_the_known_keys_and_redac
     assert problem["field"] == "nam"
     assert problem["known"] == ["name", "secret"]
     assert problem["did_you_mean"] == "name"
+
+
+class _Slurm(BaseModel):
+    """A union member: a discriminated union's tag is in the validation location and is no key a reader wrote."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    IDENTITY_ROLES: ClassVar[dict[str, Any]] = {"kind": Role.CONTENT, "partition": Role.CONTENT}
+
+    kind: Literal["slurm"] = "slurm"
+    partition: int
+
+
+class _Local(BaseModel):
+    """The other member, so the union has a discriminator to name."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    IDENTITY_ROLES: ClassVar[dict[str, Any]] = {"kind": Role.CONTENT}
+
+    kind: Literal["local"] = "local"
+
+
+class _Judge(BaseModel):
+    """The block `--set judge.…` validates on its own."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    IDENTITY_ROLES: ClassVar[dict[str, Any]] = {"backend": Role.CONTENT}
+
+    backend: Annotated[_Slurm | _Local, Field(discriminator="kind")] = Field(default_factory=_Local)
+
+
+class _Run(BaseModel):
+    """The document whose `judge` block holds the union."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    IDENTITY_ROLES: ClassVar[dict[str, Any]] = {"judge": Role.CONTENT}
+
+    judge: _Judge
+
+
+def _union_error() -> ValidationError:
+    """The one error a union member's bad value raises, at its raw pydantic location."""
+    with pytest.raises(ValidationError) as caught:
+        _Run.model_validate({"judge": {"backend": {"kind": "slurm", "partition": "nope"}}})
+    return caught.value
+
+
+def test_a_union_members_tag_is_not_a_field_the_reader_wrote() -> None:
+    """H2: pydantic names the member it tried (``slurm``); the document has no such key.
+
+    The product's ``validation_problems`` dropped it with ``_walk``, and the replacement reported
+    ``judge.backend.slurm.partition``: a path no document has, and one no ``--set`` can address.
+    """
+    exc = _union_error()
+    assert [part for part in exc.errors(include_url=False)[0]["loc"]] == ["judge", "backend", "slurm", "partition"]
+    fault = config_error(exc, model=_Run, source="dev.yaml")
+    problem = fault.details["errors"][0]
+    assert problem["field"] == "judge.backend.partition"
+    assert problem["expected"] == "int"
+    assert fault.message.startswith("dev.yaml: judge.backend.partition:")
+    assert "did you mean" not in fault.message
+
+
+def test_an_override_that_set_the_field_is_blamed_on_the_override() -> None:
+    """H2: with ``overrides=``, a ``--set`` typo is blamed on the override, not on the file it overrode."""
+    fault = config_error(
+        _union_error(),
+        model=_Run,
+        source="dev.yaml",
+        overrides=["judge.backend.partition=abc"],
+    )
+    problem = fault.details["errors"][0]
+    assert problem["source"] == "--set"
+    assert fault.message.startswith("--set judge.backend.partition:")
+    assert fault.hint is not None and "override" in fault.hint
+    assert fault.cli_hint is not None and "--set" in fault.cli_hint
+
+
+def test_a_prefix_names_the_validated_value_inside_the_overrides_namespace() -> None:
+    """H2: ``--set judge.x=…`` validates the judge block alone, so the problem's path carries the prefix."""
+    with pytest.raises(ValidationError) as caught:
+        _Judge.model_validate({"backend": {"kind": "slurm", "partition": "nope"}})
+    fault = config_error(
+        caught.value,
+        model=_Judge,
+        source="run config",
+        prefix="judge",
+        overrides=["judge.backend.partition=abc"],
+    )
+    problem = fault.details["errors"][0]
+    assert problem["field"] == "judge.backend.partition"
+    assert problem["source"] == "--set"
+
+
+def test_a_caller_supplied_hint_replaces_the_default() -> None:
+    """H2: a caller that knows the next step passes ``hint=``; no default is invented on top of it."""
+    fault = config_error(_union_error(), model=_Run, source="dev.yaml", hint="fix the judge block")
+    assert fault.hint == "fix the judge block"
+    assert fault.cli_hint is None
 
 
 # --- extends ------------------------------------------------------------------------------------------------

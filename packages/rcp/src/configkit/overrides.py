@@ -469,5 +469,10 @@ def pipeline[ModelT: BaseModel](
     try:
         validated = validate(draft)
     except ValidationError as exc:
-        raise config_error(exc, model=model, source=str(path)) from exc
+        raise config_error(
+            exc,
+            model=model,
+            source=str(path),
+            overrides=[f"{override.path}={override.value!r}" for override in overrides],
+        ) from exc
     return Applied(model=validated, overrides=tuple(overrides), payload=identity_of(validated))

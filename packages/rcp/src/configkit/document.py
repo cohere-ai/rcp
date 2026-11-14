@@ -510,6 +510,116 @@ def _locate(model: type[BaseModel], loc: Sequence[str]) -> tuple[type[BaseModel]
     return container, annotation
 
 
+def _json_schema(model: type[BaseModel]) -> dict[str, Any]:
+    """*model*'s JSON Schema, or an empty mapping when pydantic cannot build one (only the hints are lost)."""
+    try:
+        return model.model_json_schema()
+    except Exception:  # a schema that cannot be built only costs the location hints, never the refusal
+        return {}
+
+
+def _walk(schema: Mapping[str, Any], loc: Sequence[str]) -> tuple[list[str], dict[str, Any] | None]:
+    """A validation location as the reader wrote it, and the sub-schema there.
+
+    A location part that names no key of a union's members is the member pydantic tried (a discriminator tag, a
+    class or type name): it is dropped from the path, and the walk continues in that member. Without this the
+    refusal names a key no document holds (``judge.backend.slurm.partition``) and no override can address it.
+    """
+    definitions = schema.get("$defs", {})
+
+    def resolve(node: dict[str, Any]) -> dict[str, Any]:
+        while "$ref" in node:
+            node = definitions.get(node["$ref"].rsplit("/", 1)[-1], {})
+        return node
+
+    node: dict[str, Any] | None = resolve(dict(schema)) if schema else None
+    path: list[str] = []
+    for part in loc:
+        if node is not None:
+            node = resolve(node)
+            members = [resolve(member) for member in node.get("anyOf", []) + node.get("oneOf", [])]
+            members = [member for member in members if member.get("type") != "null"]
+            if len(members) == 1:  # an optional value is no union: pydantic names no member
+                node = members[0]
+                members = [resolve(member) for member in node.get("anyOf", []) + node.get("oneOf", [])]
+            if len(members) > 1 and not _has_key(node, part) and not any(_has_key(member, part) for member in members):
+                node = _member(node, members, part, resolve)
+                continue
+        path.append(part)
+        node = _step(node, part, resolve) if node is not None else None
+    return path, resolve(node) if node is not None else None
+
+
+def _has_key(node: Mapping[str, Any], part: str) -> bool:
+    """Whether *part* can be a key (or an index) of the value *node* describes."""
+    extra = node.get("additionalProperties")
+    return part in node.get("properties", {}) or (part.isdigit() and "items" in node) or bool(extra)
+
+
+#: Python type names pydantic puts in a location, and the JSON Schema type of each.
+_JSON_TYPES: Final[Mapping[str, str]] = {
+    "str": "string",
+    "int": "integer",
+    "float": "number",
+    "bool": "boolean",
+    "dict": "object",
+    "list": "array",
+}
+
+
+def _member(
+    node: Mapping[str, Any],
+    members: list[dict[str, Any]],
+    tag: str,
+    resolve: Callable[[dict[str, Any]], dict[str, Any]],
+) -> dict[str, Any] | None:
+    """The member of a union a location's *tag* names (``None`` when no member is recognised)."""
+    for union in (node, *members):  # a discriminated union, or one nested in an optional one
+        mapping = union.get("discriminator", {}).get("mapping", {})
+        if tag in mapping:
+            return resolve({"$ref": mapping[tag]})
+    for member in members:
+        name = member.get("properties", {}).get("name", {})
+        if name.get("const") == tag or tag in name.get("enum", ()):
+            return member
+    for member in members:
+        title = str(member.get("title", ""))
+        if title and (title == tag or title in tag or title.lower().startswith(tag.lower())):
+            return member
+    json_type = _JSON_TYPES.get(tag)
+    return next((member for member in members if json_type is not None and member.get("type") == json_type), None)
+
+
+def _known_keys(schema: Mapping[str, Any], loc: Sequence[str]) -> list[str]:
+    """The keys a mapping at *loc* may hold (every member of a union counted)."""
+    node = _walk(schema, loc)[1] or {}
+    keys = set(node.get("properties", {}))
+    definitions = schema.get("$defs", {})
+    for member in node.get("anyOf", []) + node.get("oneOf", []):
+        while "$ref" in member:
+            member = definitions.get(member["$ref"].rsplit("/", 1)[-1], {})
+        keys |= set(member.get("properties", {}))
+    return sorted(keys)
+
+
+def _step(
+    node: dict[str, Any], part: str, resolve: Callable[[dict[str, Any]], dict[str, Any]]
+) -> dict[str, Any] | None:
+    """The sub-schema of *node* at *part*: a property, a list's items, or a mapping's value schema."""
+    node = resolve(node)
+    if part in node.get("properties", {}):
+        return node["properties"][part]
+    if part.isdigit() and "items" in node:
+        return node["items"]
+    if isinstance(node.get("additionalProperties"), dict):
+        return node["additionalProperties"]
+    for member in node.get("anyOf", []) + node.get("oneOf", []):
+        found = _step(member, part, resolve)
+        if found is not None:
+            return found
+    return None
+
+
 def _plain(value: Any) -> Any:
     """*value* as JSON-serialisable facts: a scalar kept, a container walked, anything else its ``repr``."""
     if value is None or isinstance(value, bool | int | float | str):
@@ -545,7 +655,10 @@ def config_error(
     *,
     model: type[BaseModel],
     source: str,
-    redact: bool = True,
+    overrides: Sequence[str] = (),
+    prefix: str = "",
+    hint: str | None = None,
+    do_redact: bool = True,
 ) -> Fault:
     """A ``ValidationError`` of a document as one :class:`~configkit.faults.Fault` a caller can act on.
 
@@ -554,37 +667,52 @@ def config_error(
     keys the mapping accepts, and the source. The message names the first problem and where it came from, so a
     caller sees one line and a program sees every problem.
 
+    The path is the one a document has, not the one pydantic walked: a discriminated union's member tag (``slurm``
+    in ``judge.backend.slurm.partition``) is a name the reader never wrote, so it is dropped. A problem a named
+    override explains is blamed on the override (``source`` is ``"--set"``) instead of on the file, because a
+    ``--set`` typo is not the document's.
+
     Args:
         exc: The ``pydantic.ValidationError`` a document's validation raised.
         model: The model class that was validated; it supplies the expected types, the known keys and the roles
             the redaction walks.
-        source: What was validated (a file path, ``"run config"``), named in the message and on each problem.
-        redact: Whether to redact; ``False`` keeps the given values verbatim, for a caller whose model declares
+        source: What was validated (a file path, ``"run config"``), blamed for problems no override explains.
+        overrides: The ``dotted.key=value`` overrides applied before validating; a problem one of them set is
+            blamed on it.
+        prefix: The dotted path of the validated value inside the overrides' namespace (``"judge"`` when
+            ``--set judge.x=...`` is validated as a judge config alone).
+        hint: The hint, instead of the default one (fix the field in the file, or the ``--set`` value).
+        do_redact: Whether to redact; ``False`` keeps the given values verbatim, for a caller whose model declares
             no roles and whose values are known to hold no secret.
 
     Returns:
         The fault: ``code`` is ``value_error``, ``details["errors"]`` the problems, ``hint`` and ``cli_hint`` the
         next step for a Python caller and for the command line.
     """
+    schema = _json_schema(model)
+    set_keys = [override.partition("=")[0].strip() for override in overrides]
     problems: list[dict[str, Any]] = []
     for error in exc.errors(include_url=False):
-        loc = [str(part) for part in error["loc"]]
+        walked = [str(part) for part in error["loc"]]
+        loc, _node = _walk(schema, walked)
         container, annotation = _locate(model, loc)
-        field = ".".join(loc) or "<config>"
+        field = ".".join([prefix, *loc] if prefix else loc) or "<config>"
         known = sorted(container.model_fields) if container is not None else []
         problem: dict[str, Any] = {
             "field": field,
             "problem": str(error["msg"]).removeprefix("Value error, "),
-            "input": _redacted_input(error.get("input"), container, loc) if redact else _plain(error.get("input")),
+            "input": None
+            if error["type"] == "missing"
+            else (_redacted_input(error.get("input"), container, loc) if do_redact else _plain(error.get("input"))),
             "known": known,
-            "source": source,
+            "source": "--set" if _set_by(field, set_keys) else source,
         }
         expected = _type_name(annotation)
         if expected is not None:
             problem["expected"] = expected
         if error["type"] == "extra_forbidden":
             problem["problem"] = "unknown key"
-            close = difflib.get_close_matches(loc[-1], known, n=1) if loc else []
+            close = difflib.get_close_matches(loc[-1], _known_keys(schema, walked[:-1]) or known, n=1) if loc else []
             if close:
                 problem["did_you_mean"] = ".".join([*field.split(".")[:-1], close[0]])
         problems.append(problem)
@@ -592,18 +720,30 @@ def config_error(
     expected_text = f" (expected {first['expected']})" if first.get("expected") else ""
     guess = f"; did you mean {first['did_you_mean']!r}?" if "did_you_mean" in first else ""
     more = f" (and {len(problems) - 1} more)" if len(problems) > 1 else ""
-    if first["field"] == "<config>":
+    where = f"--set {first['field']}" if first["source"] == "--set" else f"{source}: {first['field']}"
+    cli_hint: str | None = None
+    if hint is not None:
+        pass
+    elif first["source"] == "--set":
+        hint = "fix the override; values are YAML literals (k=10, k=null, 'k=[1, 2]')"
+        cli_hint = "fix the --set value; values are YAML literals (--set k=10, --set k=null, --set 'k=[1, 2]')"
+    elif first["field"] == "<config>":
         hint, cli_hint = f"fix {source}", f"fix {source}"
     else:
         hint = f"fix {first['field']} in {source}, or override it (overrides=['{first['field']}=...'])"
         cli_hint = f"fix {first['field']} in {source}, or override it with --set {first['field']}=..."
     return Fault(
-        f"{source}: {first['field']}: {first['problem']}{expected_text}{guess}{more}",
+        f"{where}: {first['problem']}{expected_text}{guess}{more}",
         code="value_error",
         details={"errors": problems},
         hint=hint,
         cli_hint=cli_hint,
     )
+
+
+def _set_by(field: str, set_keys: Sequence[str]) -> bool:
+    """Whether a named override set *field*, or a value *field* sits inside: the ``--set`` attribution rule."""
+    return any(field == key or field.startswith(f"{key}.") or key.startswith(f"{field}.") for key in set_keys)
 
 
 def leaf_paths(model: type[BaseModel]) -> tuple[str, ...]:
