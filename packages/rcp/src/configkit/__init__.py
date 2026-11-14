@@ -73,6 +73,17 @@ from configkit.overrides import (
     pipeline,
     unset,
 )
+from configkit.plugins import (
+    Provider,
+    Registration,
+    Registry,
+    ValidationHook,
+    lookup,
+    register,
+    register_from,
+    registered_names,
+    validation_hooks,
+)
 from configkit.ports import (
     AtomicWriter,
     Budget,
@@ -98,6 +109,7 @@ from configkit.schemas import (
     registry,
 )
 from configkit.spec import Brand, FrozenSpec, OperationOptions, OptionSchema, frozen_mapping, frozen_sequence
+from configkit.storage import RunLayout, lock, publish, read_uri, write_uri
 
 __all__ = [
     # commands.py
@@ -157,6 +169,16 @@ __all__ = [
     "merge_layers",
     "unset",
     "VALUE_ERRORS",
+    # plugins.py
+    "Provider",
+    "Registry",
+    "Registration",
+    "ValidationHook",
+    "lookup",
+    "registered_names",
+    "register",
+    "register_from",
+    "validation_hooks",
     # ports.py
     "Clock",
     "Budget",
@@ -192,4 +214,10 @@ __all__ = [
     "frozen_sequence",
     "OptionSchema",
     "OperationOptions",
+    # storage.py
+    "publish",
+    "lock",
+    "read_uri",
+    "write_uri",
+    "RunLayout",
 ]
