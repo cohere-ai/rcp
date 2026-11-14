@@ -61,7 +61,7 @@ from pydantic import BaseModel
 from configkit.faults import WARNING_CODES, Fault
 from configkit.roles import Role, _nested_model
 from configkit.schemas import SchemaTagged
-from configkit.spec import Brand
+from configkit.spec import Brand, declared_along_mro
 
 __all__ = ["audit", "pure", "scan"]
 
@@ -244,12 +244,9 @@ def _walk(
 def _check_roles(model: type[BaseModel], findings: list[str]) -> Mapping[str, Role]:
     """A1 and A2: every field has a role, and every declared role names a field. Returns the usable roles."""
     merged: dict[str, Any] = {}
-    for klass in reversed(model.__mro__):
-        declared = klass.__dict__.get(_ROLES)
-        if declared is None:
-            continue
+    for klass, declared in declared_along_mro(model, _ROLES):
         if not isinstance(declared, Mapping):
-            findings.append(f"A2 {model.__name__}: {_ROLES} must be a mapping of field name to role")
+            findings.append(f"A2 {klass.__name__}: {_ROLES} must be a mapping of field name to role")
             continue
         merged.update(declared)
     roles: dict[str, Role] = {}
@@ -329,10 +326,9 @@ def _check_schema_defaults(model: type[BaseModel], brand: Brand | None, findings
 
 def _check_warning_codes(model: type[BaseModel], findings: list[str]) -> None:
     """A7: a record that declares the warning channel must declare a code it can emit."""
-    for klass in model.__mro__:
-        declared = klass.__dict__.get(WARNING_CODES)
-        if declared is None:
-            continue
+    declarations = declared_along_mro(model, WARNING_CODES)
+    if declarations:
+        declared = declarations[-1][1]
         codes = (declared,) if isinstance(declared, str) else tuple(str(code) for code in declared)
         if not codes or any(not code.strip() for code in codes):
             findings.append(

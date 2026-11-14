@@ -45,12 +45,12 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from enum import Enum
 from pathlib import PurePath
-from types import MappingProxyType
 from typing import Any, Final
 
 from pydantic import BaseModel
 
 from configkit.faults import ValueErrorFault
+from configkit.spec import _frozen
 
 __all__ = [
     "SHORT_ID_LENGTH",
@@ -264,8 +264,9 @@ def freeze(value: Any) -> Any:
     """An identity artifact with every container frozen, at every depth (rcp-29).
 
     A model is already frozen as a record, but a list inside it is not: ``model.list.append(...)`` changes the
-    artifact after it was recorded. This walks the value and replaces each container, so the artifact is data that
-    cannot change -- a model becomes a read-only mapping of its fields (extras included), a mapping a
+    artifact after it was recorded. The one walk lives in :mod:`configkit.spec` (``_frozen``), so this name and
+    ``frozen_mapping``/``frozen_sequence`` are one rule with three doors --
+    a model becomes a read-only mapping of its fields (extras included), a mapping a
     :class:`types.MappingProxyType`, and a list or tuple a tuple.
 
     Args:
@@ -274,12 +275,4 @@ def freeze(value: Any) -> Any:
     Returns:
         The frozen form: read-only mappings and tuples at every depth, a scalar unchanged.
     """
-    if isinstance(value, BaseModel):
-        fields = {name: freeze(getattr(value, name)) for name in type(value).model_fields}
-        fields.update({name: freeze(item) for name, item in (value.__pydantic_extra__ or {}).items()})
-        return MappingProxyType(fields)
-    if isinstance(value, Mapping):
-        return MappingProxyType({key: freeze(item) for key, item in value.items()})
-    if isinstance(value, (list, tuple)):
-        return tuple(freeze(item) for item in value)
-    return value
+    return _frozen(value)

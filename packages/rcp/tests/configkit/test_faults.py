@@ -15,6 +15,7 @@ import configkit.faults as faults
 import pytest
 from configkit.faults import (
     FAULT_CODES,
+    ConfigWarning,
     Fault,
     ValueErrorFault,
     classify,
@@ -205,3 +206,35 @@ def test_every_public_door_raises_the_one_fault() -> None:
     for door in doors:
         with pytest.raises(ValueErrorFault):
             door()
+
+
+def test_the_warning_class_is_public_and_matches_the_envelope() -> None:
+    """H5: the class was private and absent from the facade, so the product's envelope dropped every warning.
+
+    ``rcp``'s envelope asks ``isinstance(record.message, RcpNdcgWarning)`` to decide which warnings its
+    ``--json`` document carries; a private class made the answer "none of the library's".
+    """
+    import configkit
+
+    assert "ConfigWarning" in faults.__all__
+    assert "ConfigWarning" in configkit.__all__
+    assert configkit.ConfigWarning is ConfigWarning
+    with pytest.warns(ConfigWarning):
+        warn(_Noticed(model="m", revision="main"), "UNPINNED_REVISION")
+
+
+def test_the_warning_channel_merges_a_base_declaration() -> None:
+    """M7: the channel's merge and the audit's A7 read one walk, so a base class's code is not invisible."""
+
+    class _Base(BaseModel):
+        WARNING_CODES: ClassVar[tuple[str, ...]] = ("BASE",)
+
+        model: str
+
+    class _Child(_Base):
+        WARNING_CODES: ClassVar[tuple[str, ...]] = ("CHILD",)
+
+    with pytest.warns(ConfigWarning):
+        warn(_Child(model="m"), "BASE")
+    with pytest.warns(ConfigWarning):
+        warn(_Child(model="m"), "CHILD")

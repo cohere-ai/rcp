@@ -32,13 +32,17 @@ from __future__ import annotations
 from collections.abc import Mapping
 from enum import StrEnum
 from types import UnionType
-from typing import Any, Union, get_args, get_origin
+from typing import Any, Final, Union, get_args, get_origin
 
 from pydantic import BaseModel
 
 from configkit.faults import ValueErrorFault
+from configkit.spec import declared_along_mro
 
 __all__ = ["Role", "identity_of", "local_inputs", "path_fields", "redact", "roles_of", "safe_url"]
+
+#: The class attribute a model declares its roles on, merged down the MRO.
+_ROLES: Final[str] = "IDENTITY_ROLES"
 
 #: The recorded form a ``SECRET`` value is replaced with: the marker ``rcp`` writes today, kept so a recorded
 #: config reads the same before and after the move.
@@ -64,7 +68,7 @@ def _declares_roles(model: type[BaseModel]) -> bool:
     role, while a model with a *partial* declaration is refused by :func:`roles_of` and must not be read as
     neither -- that silence is how a ``PATH`` leaf stops resolving without a word.
     """
-    return any("IDENTITY_ROLES" in klass.__dict__ for klass in model.__mro__)
+    return any(_ROLES in klass.__dict__ for klass in model.__mro__)
 
 
 def roles_of(model: type[BaseModel]) -> Mapping[str, Role]:
@@ -88,10 +92,7 @@ def roles_of(model: type[BaseModel]) -> Mapping[str, Role]:
             ``"value_error"``.
     """
     merged: dict[str, Role] = {}
-    for klass in reversed(model.__mro__):
-        declared = klass.__dict__.get("IDENTITY_ROLES")
-        if declared is None:
-            continue
+    for klass, declared in declared_along_mro(model, _ROLES):
         if not isinstance(declared, Mapping):
             raise ValueErrorFault(f"{klass.__name__}.IDENTITY_ROLES must be a mapping of field name to Role")
         for name, role in declared.items():

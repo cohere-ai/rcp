@@ -42,10 +42,12 @@ from configkit.document import (
     resolve,
     resolve_reference,
     validate,
+    validate_or_fault,
 )
 from configkit.faults import (
     FAULT_CODES,
     WARNING_CODES,
+    ConfigWarning,
     Fault,
     OptionalDependencyMissing,
     OSErrorFault,
@@ -103,7 +105,7 @@ from configkit.ports import (
     logger,
     once,
 )
-from configkit.roles import Role, identity_of, local_inputs, path_fields, redact, roles_of
+from configkit.roles import Role, identity_of, local_inputs, path_fields, redact, roles_of, safe_url
 from configkit.schemas import (
     ArtifactHome,
     DocumentId,
@@ -113,8 +115,16 @@ from configkit.schemas import (
     home_of,
     registry,
 )
-from configkit.spec import Brand, FrozenSpec, OperationOptions, OptionSchema, frozen_mapping, frozen_sequence
-from configkit.storage import RunLayout, lock, publish, read_uri, write_uri
+from configkit.spec import (
+    Brand,
+    FrozenSpec,
+    OperationOptions,
+    OptionSchema,
+    declared_along_mro,
+    frozen_mapping,
+    frozen_sequence,
+)
+from configkit.storage import RunLayout, lock, publish, publish_bytes, read_uri, write_uri
 from configkit.vocab import (
     BudgetKey,
     Capability,
@@ -162,7 +172,9 @@ __all__ = [
     "register_field_type",
     "leaf_paths",
     "resolve_reference",
+    "validate_or_fault",
     # faults.py
+    "ConfigWarning",
     "Fault",
     "OSErrorFault",
     "RuntimeErrorFault",
@@ -223,6 +235,7 @@ __all__ = [
     "identity_of",
     "path_fields",
     "redact",
+    "safe_url",
     "local_inputs",
     # schemas.py
     "SchemaTagged",
@@ -235,12 +248,14 @@ __all__ = [
     # spec.py
     "Brand",
     "FrozenSpec",
+    "declared_along_mro",
     "frozen_mapping",
     "frozen_sequence",
     "OptionSchema",
     "OperationOptions",
     # storage.py
     "publish",
+    "publish_bytes",
     "lock",
     "read_uri",
     "write_uri",

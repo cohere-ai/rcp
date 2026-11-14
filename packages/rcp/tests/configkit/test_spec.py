@@ -13,7 +13,15 @@ from types import MappingProxyType
 from typing import Any
 
 import pytest
-from configkit.spec import Brand, FrozenSpec, OperationOptions, OptionSchema, frozen_mapping, frozen_sequence
+from configkit.spec import (
+    Brand,
+    FrozenSpec,
+    OperationOptions,
+    OptionSchema,
+    declared_along_mro,
+    frozen_mapping,
+    frozen_sequence,
+)
 from pydantic import ValidationError
 
 
@@ -71,3 +79,39 @@ def test_brand_is_frozen_and_names_its_three_uses() -> None:
     assert brand.output_schema_prefix == "p.out"
     with pytest.raises(FrozenInstanceError):
         brand.name = "q"
+
+
+def test_a_model_inside_a_frozen_container_is_frozen_too() -> None:
+    """L2: ``identity.freeze`` and ``spec._frozen`` were two walkers for one "immutable at every depth" rule."""
+    from configkit.identity import freeze
+
+    block = _Block(name="x", options={"a": [1]})
+    frozen = frozen_mapping({"block": block})["block"]
+    assert isinstance(frozen, MappingProxyType)
+    assert frozen == freeze(block)
+    assert frozen["name"] == "x"
+
+
+def test_the_declaration_walk_reads_each_class_base_first() -> None:
+    """M7: four independent walks of "the declared attribute merges down the MRO" became one reader."""
+    from typing import ClassVar
+
+    from configkit.roles import Role, roles_of
+
+    class _BaseDeclared(FrozenSpec):
+        IDENTITY_ROLES: ClassVar[dict[str, Any]] = {"a": Role.CONTENT}
+
+        a: str
+
+    class _ChildDeclared(_BaseDeclared):
+        IDENTITY_ROLES: ClassVar[dict[str, Any]] = {"a": Role.RUNTIME, "b": Role.CONTENT}
+
+        b: str
+
+    pairs = declared_along_mro(_ChildDeclared, "IDENTITY_ROLES")
+    assert [klass.__name__ for klass, _ in pairs] == ["_BaseDeclared", "_ChildDeclared"]
+    assert [declared for _, declared in pairs] == [
+        {"a": Role.CONTENT},
+        {"a": Role.RUNTIME, "b": Role.CONTENT},
+    ]
+    assert roles_of(_ChildDeclared) == {"a": Role.RUNTIME, "b": Role.CONTENT}

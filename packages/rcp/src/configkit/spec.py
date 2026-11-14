@@ -25,18 +25,47 @@ __all__ = [
     "FrozenSpec",
     "OperationOptions",
     "OptionSchema",
+    "declared_along_mro",
     "frozen_mapping",
     "frozen_sequence",
 ]
 
 
 def _frozen(value: Any) -> Any:
-    """*value* with every mapping and sequence frozen, at every depth (the recursion both freezers share)."""
+    """*value* with every container frozen, at every depth: the one freeze walk (a model's fields included).
+
+    A model becomes a read-only mapping of its fields (its extras too), a mapping a
+    :class:`types.MappingProxyType`, and a list or tuple a tuple. :func:`configkit.identity.freeze` is this
+    walk's public name; ``frozen_mapping``/``frozen_sequence`` are its two typed doors.
+    """
+    if isinstance(value, BaseModel):
+        fields = {name: _frozen(getattr(value, name)) for name in type(value).model_fields}
+        fields.update({name: _frozen(item) for name, item in (value.__pydantic_extra__ or {}).items()})
+        return MappingProxyType(fields)
     if isinstance(value, Mapping):
         return MappingProxyType({key: _frozen(item) for key, item in value.items()})
     if isinstance(value, (list, tuple)):
         return tuple(_frozen(item) for item in value)
     return value
+
+
+def declared_along_mro(model: type[BaseModel], attribute: str) -> tuple[tuple[type[BaseModel], Any], ...]:
+    """The declarations *model*'s classes make for *attribute*, base class first: the one walk of the MRO rule.
+
+    A declaration is read from the class's own ``__dict__``, so an inherited value is not re-declared and a
+    caller that merges gives the most derived declaration the last word. Four readers shared this rule -- the
+    role walk (:func:`configkit.roles.roles_of`), the audit's role and warning checks, and the warning channel
+    (:func:`configkit.faults.warn`) -- and each carried its own copy, so a change to one silently diverged from
+    its twin. The walk is here; the policy (raise, report, merge) stays with each caller.
+
+    Args:
+        model: The model class whose MRO is walked.
+        attribute: The class attribute's name (``IDENTITY_ROLES``, ``WARNING_CODES``).
+
+    Returns:
+        One ``(class, declared value)`` pair per class that declares *attribute*, in MRO order (base first).
+    """
+    return tuple((klass, klass.__dict__[attribute]) for klass in reversed(model.__mro__) if attribute in klass.__dict__)
 
 
 def frozen_mapping(value: Mapping[str, Any]) -> MappingProxyType[str, Any]:

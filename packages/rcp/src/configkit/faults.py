@@ -27,10 +27,12 @@ from typing import Any, Final
 from pydantic import BaseModel
 
 from configkit.ports import ExitCodeTable
+from configkit.spec import declared_along_mro
 
 __all__ = [
     "FAULT_CODES",
     "WARNING_CODES",
+    "ConfigWarning",
     "Fault",
     "OSErrorFault",
     "OptionalDependencyMissing",
@@ -238,8 +240,13 @@ def require(module: str, *, hint: str, extra: str | None = None) -> ModuleType:
         ) from exc
 
 
-class _Warning(UserWarning):
-    """The record one ``warn`` call raises: the code, the record's text and the fields the caller passed."""
+class ConfigWarning(UserWarning):
+    """The record one :func:`warn` call raises: the code, the record's text and the fields the caller passed.
+
+    The class is public because the consumer's front end matches it: ``rcp``'s envelope asks
+    ``isinstance(record.message, RcpNdcgWarning)`` to decide which warnings its ``--json`` document carries, and
+    a private class made every library warning invisible there.
+    """
 
     def __init__(self, code: str, message: str, fields: Mapping[str, Any]) -> None:
         super().__init__(message)
@@ -249,13 +256,15 @@ class _Warning(UserWarning):
 
 
 def _declared_warning_codes(record: BaseModel) -> tuple[str, ...]:
-    """The warning codes *record*'s class declares, merged down the MRO (most derived declaration wins)."""
+    """The warning codes *record*'s class declares, merged down the MRO (most derived declaration wins).
+
+    A declaration written as one string is one code, not its characters: ``audit``'s A7 check reads the same
+    declaration, and the two must not disagree about what it says.
+    """
     merged: list[str] = []
-    for klass in reversed(type(record).__mro__):
-        declared = klass.__dict__.get(WARNING_CODES)
-        if declared is None:
-            continue
-        merged.extend(str(code) for code in declared)
+    for _klass, declared in declared_along_mro(type(record), WARNING_CODES):
+        codes = (declared,) if isinstance(declared, str) else declared
+        merged.extend(str(code) for code in codes)
     return tuple(dict.fromkeys(merged))
 
 
@@ -282,4 +291,4 @@ def warn(record: BaseModel, code: str, **fields: Any) -> None:
     if code not in declared:
         known = ", ".join(declared)
         raise ValueErrorFault(f"unknown warning code {code!r} for {type(record).__name__}; known: {known}")
-    warnings.warn(_Warning(code, str(record), {**record.model_dump(), **fields}), stacklevel=2)
+    warnings.warn(ConfigWarning(code, str(record), {**record.model_dump(), **fields}), stacklevel=2)
