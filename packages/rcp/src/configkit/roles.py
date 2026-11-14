@@ -57,6 +57,16 @@ class Role(StrEnum):
     OUTPUT = "output"
 
 
+def _declares_roles(model: type[BaseModel]) -> bool:
+    """Whether *model* or one of its bases declares ``IDENTITY_ROLES`` at all.
+
+    The one case a caller may read as "no roles": a model with no declaration declares no ``PATH`` leaf and no
+    role, while a model with a *partial* declaration is refused by :func:`roles_of` and must not be read as
+    neither -- that silence is how a ``PATH`` leaf stops resolving without a word.
+    """
+    return any("IDENTITY_ROLES" in klass.__dict__ for klass in model.__mro__)
+
+
 def roles_of(model: type[BaseModel]) -> Mapping[str, Role]:
     """The roles *model*'s fields declare, merged down its MRO.
 

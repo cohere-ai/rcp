@@ -38,7 +38,7 @@ from typing import Any, Final, Literal, Union, get_args, get_origin
 from pydantic import BaseModel, ValidationError
 
 from configkit.faults import Fault, require
-from configkit.roles import _model_of, _nested_model, path_fields, redact, roles_of
+from configkit.roles import _declares_roles, _model_of, _nested_model, path_fields, redact, roles_of
 
 __all__ = [
     "Applied",
@@ -267,13 +267,17 @@ def _path_rows(model: type[BaseModel], extra: Sequence[Sequence[str]]) -> tuple[
     """The dotted rows :func:`resolve` walks: the model's declared ``PATH`` leaves, then the caller's own rows.
 
     A model that declares no ``IDENTITY_ROLES`` declares no ``PATH`` leaf, so only the caller's rows apply;
-    ``audit``'s A4 check is what refuses a ``PATH`` field this enumeration misses. A row written as one dotted
-    string is refused: a string is a sequence of characters, so it would walk ``s``, ``o``, ``u``... and resolve
-    nothing, which is the silent miss this library exists to prevent.
+    ``audit``'s A4 check is what refuses a ``PATH`` field this enumeration misses. A *partial* declaration is not
+    that case: :func:`path_fields` refuses it and the refusal propagates, because reading it as "no PATH leaf"
+    would leave every ``PATH`` value unresolved and say nothing. A row written as one dotted string is refused
+    too: a string is a sequence of characters, so it would walk ``s``, ``o``, ``u``... and resolve nothing, which
+    is the silent miss this library exists to prevent.
     """
     try:
         declared = path_fields(model)
     except Fault:
+        if _declares_roles(model):
+            raise
         declared = ()
     rows: list[tuple[str, ...]] = []
     for row in extra:
@@ -361,7 +365,8 @@ def resolve[ModelT: BaseModel](
     Raises:
         Fault: the document holds a key *model* does not declare and the model forbids extras (``value_error``);
             ``model_construct`` would drop it, and a dropped key is a typo nobody sees. A *path_fields* row
-            written as one dotted string is refused too (``value_error``).
+            written as one dotted string is refused too (``value_error``), and so is a malformed
+            ``IDENTITY_ROLES`` declaration (see :func:`configkit.roles.roles_of`).
     """
     payload = document.payload
     _unknown_keys(model, payload)

@@ -65,6 +65,26 @@ class _Run(BaseModel):
     }
 
 
+class _Partial(BaseModel):
+    """A model whose declaration omits one field: a malformed declaration, not a model that declares none."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    source: str
+    name: str
+
+    IDENTITY_ROLES: ClassVar[dict[str, Any]] = {"name": Role.CONTENT}
+
+
+class _NoRoles(BaseModel):
+    """A model that declares no ``IDENTITY_ROLES`` at all: an override of it is written verbatim."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    source: str
+    name: str
+
+
 def _write(path: Path, text: str) -> Path:
     """Write *text* to *path* as UTF-8, creating the directory, and return the path."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -169,6 +189,27 @@ def test_an_unknown_leaf_is_refused_with_the_path() -> None:
     with pytest.raises(Fault) as caught:
         apply(_draft(), parse(["name.first=1"]), base=Path("/tmp"))
     assert caught.value.details["refusal"] == "not_a_mapping"
+
+
+def test_an_override_against_a_partial_role_declaration_is_refused(tmp_path: Path) -> None:
+    """H1: a malformed declaration must not write a PATH override unresolved and silently.
+
+    ``_role_of`` caught every ``Fault`` from ``roles_of`` and returned ``None``, so a leaf the declaration forgot
+    took the override value verbatim instead of resolving it against the base -- a wrong value in the identity,
+    not a refusal.
+    """
+    draft = _Partial.model_construct(source="data/inputs.jsonl", name="x")
+    with pytest.raises(Fault) as caught:
+        apply(draft, parse(["source=other/inputs.jsonl"]), base=tmp_path)
+    assert "source" in caught.value.message
+    assert caught.value.code == "value_error"
+
+
+def test_an_override_on_a_model_with_no_role_declaration_is_written_verbatim(tmp_path: Path) -> None:
+    """The presence case that stays silent: no declaration means no PATH leaf, so no base is applied."""
+    draft = _NoRoles.model_construct(source="data/inputs.jsonl", name="x")
+    applied = apply(draft, parse(["source=other/inputs.jsonl"]), base=tmp_path)
+    assert applied.source == "other/inputs.jsonl"
 
 
 def test_apply_writes_through_a_draft_whose_nested_block_is_still_a_mapping() -> None:

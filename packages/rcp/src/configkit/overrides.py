@@ -40,7 +40,7 @@ from configkit.document import (
     validate,
 )
 from configkit.faults import Fault, require
-from configkit.roles import Role, _model_of, identity_of, roles_of
+from configkit.roles import Role, _declares_roles, _model_of, identity_of, roles_of
 
 __all__ = [
     "Override",
@@ -100,10 +100,17 @@ def _leaves(model: type[BaseModel], prefix: tuple[str, ...]) -> str:
 
 
 def _role_of(model: type[BaseModel], name: str) -> Role | None:
-    """The role *name* declares in *model*, or ``None`` when the model declares no ``IDENTITY_ROLES``."""
+    """The role *name* declares in *model*, or ``None`` when the model declares no ``IDENTITY_ROLES``.
+
+    A *partial* declaration is not "no declaration": :func:`roles_of` refuses it and the refusal propagates,
+    because reading it as ``None`` writes a ``PATH`` override unresolved and silently -- a wrong value in the
+    identity rather than a refusal.
+    """
     try:
         return roles_of(model).get(name)
     except Fault:
+        if _declares_roles(model):
+            raise
         return None
 
 
@@ -289,8 +296,9 @@ def apply[ModelT: BaseModel](
         A new model with every override written; *draft* is unchanged.
 
     Raises:
-        Fault: a path names no leaf of the model (``not_a_leaf``, with the path and the known leaves), or runs
-            through a field that is not a model (``not_a_mapping``).
+        Fault: a path names no leaf of the model (``not_a_leaf``, with the path and the known leaves), runs
+            through a field that is not a model (``not_a_mapping``), or the model's ``IDENTITY_ROLES`` declaration
+            is malformed (see :func:`configkit.roles.roles_of`).
     """
     updated = draft
     for override in overrides:

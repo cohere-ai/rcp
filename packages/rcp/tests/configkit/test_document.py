@@ -93,6 +93,26 @@ class _Defaults(BaseModel):
     IDENTITY_ROLES: ClassVar[dict[str, Any]] = {"inner": Role.CONTENT}
 
 
+class _Partial(BaseModel):
+    """A model whose declaration omits one field: a malformed declaration, not a model that declares none."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    source: str
+    name: str
+
+    IDENTITY_ROLES: ClassVar[dict[str, Any]] = {"name": Role.CONTENT}
+
+
+class _NoRoles(BaseModel):
+    """A model that declares no ``IDENTITY_ROLES`` at all: it declares no PATH leaf, so none is resolved."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    source: str
+    name: str
+
+
 def _write(path: Path, text: str) -> Path:
     """Write *text* to *path* as UTF-8, creating the directory, and return the path."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -217,6 +237,27 @@ def test_a_path_fields_row_written_as_one_string_is_refused(tmp_path: Path) -> N
     with pytest.raises(Fault) as caught:
         resolve(read(path), _Doc, path_fields=["source"])
     assert "path_fields" in caught.value.message
+
+
+def test_a_partial_role_declaration_is_refused_not_read_as_no_declaration(tmp_path: Path) -> None:
+    """H1: a malformed declaration must not leave every PATH leaf silently unresolved.
+
+    ``_path_rows`` caught every ``Fault`` from ``path_fields`` and read it as "this model declares no PATH leaf",
+    so a model whose declaration omits one field resolved nothing and said nothing -- the ``model.checkpoint``
+    never resolves defect the library exists to remove.
+    """
+    path = _write(tmp_path / "doc.yaml", "source: data/inputs.jsonl\nname: x\n")
+    with pytest.raises(Fault) as caught:
+        resolve(read(path), _Partial)
+    assert "source" in caught.value.message
+    assert caught.value.code == "value_error"
+
+
+def test_a_model_with_no_role_declaration_resolves_no_declared_path(tmp_path: Path) -> None:
+    """The presence case the loader may still read as "no roles": no declaration, no PATH leaf, value unchanged."""
+    path = _write(tmp_path / "doc.yaml", "source: data/inputs.jsonl\nname: x\n")
+    draft = resolve(read(path), _NoRoles)
+    assert draft.source == "data/inputs.jsonl"
 
 
 # --- lazy YAML -----------------------------------------------------------------------------------------------
