@@ -55,6 +55,10 @@ class _Atomic:
     def write(self, path: Path, data: bytes) -> None:
         path.write_bytes(data)
 
+    def swap(self, path: Path, staged: Path) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        staged.replace(path)
+
 
 class _Uri:
     """A URI reader/writer with no bytes to offer."""

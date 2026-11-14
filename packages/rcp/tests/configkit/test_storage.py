@@ -10,7 +10,8 @@ library owns the seam and one scheme, and a remote scheme with no handler is ref
 
 from __future__ import annotations
 
-import io
+import os
+import stat
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -18,19 +19,24 @@ from typing import Any
 import pytest
 from configkit.faults import Fault
 from configkit.ports import Ports
-from configkit.storage import RunLayout, lock, publish, read_uri, write_uri
+from configkit.storage import RunLayout, lock, publish, publish_bytes, read_uri, write_uri
 
 
 class _Atomic:
-    """A recording :class:`~configkit.ports.AtomicWriter`: it keeps the path and the bytes of every swap."""
+    """A recording :class:`~configkit.ports.AtomicWriter`: it keeps the bytes and the staged file of every swap."""
 
     def __init__(self) -> None:
         self.swaps: list[tuple[Path, bytes]] = []
 
     def write(self, path: Path, data: bytes) -> None:
-        """Record the swap and perform it, so the file's content is the seam's proof."""
+        """Record the buffer form and perform it, so the file's content is the seam's proof."""
         self.swaps.append((path, data))
         path.write_bytes(data)
+
+    def swap(self, path: Path, staged: Path) -> None:
+        """Record the path form: the staged file the producer filled is renamed into place."""
+        self.swaps.append((path, staged.read_bytes()))
+        os.replace(staged, path)
 
 
 class _Uri:
@@ -69,33 +75,87 @@ def _ports(uri: _Uri) -> Ports:
 # ---------------------------------------------------------------------------------------------------------------
 
 
-def test_publish_swaps_the_file_through_the_injected_atomic_writer(tmp_path: Path) -> None:
-    """The writer is the caller's, and the bytes are what the caller's ``write`` produced."""
+def test_publish_streams_through_a_staging_path_and_swaps_it(tmp_path: Path) -> None:
+    """H3: the producer fills a staging file beside the destination; the artifact is never held in memory."""
     atomic = _Atomic()
     target = tmp_path / "artifact.bin"
+    seen: list[Path] = []
 
-    def write(stream: io.BufferedIOBase) -> None:
-        stream.write(b"first\n")
-        stream.write(b"second\n")
+    def write(staged: Path) -> None:
+        seen.append(staged)
+        with staged.open("wb") as handle:
+            handle.write(b"first\n")
+            handle.write(b"second\n")
 
     publish(f"file://{target}", write, atomic=atomic)
+    assert len(seen) == 1
+    assert seen[0].name.endswith(".tmp") and seen[0].parent == target.parent
     assert atomic.swaps == [(target, b"first\nsecond\n")]
     assert target.read_bytes() == b"first\nsecond\n"
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
+def test_publish_applies_the_declared_mode_to_the_published_file(tmp_path: Path) -> None:
+    """H3: the product's five run-record call sites pass ``mode=0o600`` on a shared filesystem."""
+    target = tmp_path / "record.json"
+    publish(f"file://{target}", lambda staged: staged.write_bytes(b"{}"), atomic=_Atomic(), mode=0o600)
+    assert stat.S_IMODE(target.stat().st_mode) == 0o600
+    assert target.read_bytes() == b"{}"
+
+
+def test_publish_bytes_is_the_buffer_form_of_the_same_rule(tmp_path: Path) -> None:
+    """A caller that already holds the bytes writes them through the same staging swap and mode."""
+    atomic = _Atomic()
+    target = tmp_path / "payload.bin"
+    publish_bytes(f"file://{target}", b"x", atomic=atomic, mode=0o640)
+    assert atomic.swaps == [(target, b"x")]
+    assert stat.S_IMODE(target.stat().st_mode) == 0o640
 
 
 def test_publish_accepts_a_bare_path(tmp_path: Path) -> None:
     """A local path with no scheme is a ``file://`` URI, so the two spellings reach the same seam."""
     atomic = _Atomic()
-    publish(str(tmp_path / "plain.bin"), lambda stream: stream.write(b"x"), atomic=atomic)
+    publish(str(tmp_path / "plain.bin"), lambda staged: staged.write_bytes(b"x"), atomic=atomic)
     assert atomic.swaps == [(tmp_path / "plain.bin", b"x")]
 
 
 def test_publish_refuses_a_remote_uri_naming_the_scheme() -> None:
     """The atomic swap is one local file's; a remote artifact is written through the URI seam instead."""
     with pytest.raises(Fault) as raised:
-        publish("gs://YOUR-BUCKET/artifact.bin", lambda stream: stream.write(b"x"), atomic=_Atomic())
+        publish("gs://YOUR-BUCKET/artifact.bin", lambda staged: staged.write_bytes(b"x"), atomic=_Atomic())
     assert "gs" in raised.value.message
     assert raised.value.details["scheme"] == "gs"
+
+
+def test_a_file_uri_authority_is_stripped(tmp_path: Path) -> None:
+    """L8: ``file://localhost/tmp/x`` was read as the relative path ``localhost/tmp/x``."""
+    target = tmp_path / "x.bin"
+    target.write_bytes(b"x")
+    assert read_uri(f"file://localhost{target}") == b"x"
+    assert read_uri(f"file://{target}") == b"x"
+
+
+def test_lock_takes_the_shared_form_when_asked(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """H4: the product takes the publication lock shared for a reader (``publication_lock(..., shared=True)``).
+
+    The library offered the exclusive form only, so a reader and a writer could not share the pair.
+    """
+    fcntl = pytest.importorskip("fcntl")
+    real = fcntl.flock
+    seen: list[int] = []
+
+    def record(handle: int, operation: int) -> Any:
+        seen.append(operation)
+        return real(handle, operation)
+
+    monkeypatch.setattr(fcntl, "flock", record)
+    with lock(tmp_path / "reader.lock", shared=True):
+        pass
+    assert seen[0] == fcntl.LOCK_SH
+    seen.clear()
+    with lock(tmp_path / "writer.lock"):
+        pass
+    assert seen[0] == fcntl.LOCK_EX
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -208,10 +268,10 @@ def test_write_uri_creates_the_parent_directory(tmp_path: Path) -> None:
 
 
 def test_a_callable_write_receives_a_buffer_not_the_file(tmp_path: Path) -> None:
-    """``publish``'s ``write`` is handed a binary stream, so a writer never holds the destination's path."""
-    seen: list[Any] = []
-    publish(f"file://{tmp_path}/x.bin", lambda stream: seen.append(stream), atomic=_Atomic())
+    """``publish``'s ``write`` is handed a staging path, never the destination's own path."""
+    seen: list[Path] = []
+    publish(f"file://{tmp_path}/x.bin", lambda staged: seen.append(staged), atomic=_Atomic())
     assert len(seen) == 1
-    assert isinstance(seen[0], io.BufferedIOBase)
-    assert callable(seen[0].write)
+    assert seen[0] != tmp_path / "x.bin"
+    assert seen[0].parent == tmp_path
     assert isinstance(publish, Callable)

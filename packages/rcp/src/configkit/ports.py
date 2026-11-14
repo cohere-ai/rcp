@@ -101,6 +101,13 @@ class AtomicWriter(Protocol):
         """Replace *path* with *data* atomically; no reader ever sees a half-written file."""
         ...
 
+    def swap(self, path: Path, staged: Path) -> None:
+        """Replace *path* with the file *staged* beside it: one rename, no half-written file.
+
+        The form a streaming producer needs: the artifact is filled in *staged* and never held in memory.
+        """
+        ...
+
 
 class UriIO(Protocol):
     """Bytes in and out of a storage URI, the implementation routing by scheme (rcp-38)."""
