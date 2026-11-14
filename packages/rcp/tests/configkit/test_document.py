@@ -183,7 +183,25 @@ def test_a_conforming_document_round_trips_through_load_with_its_schema_id(tmp_p
 
 def test_a_document_that_declares_no_schema_records_none(tmp_path: Path) -> None:
     """A caller that names no id checks none, and the record says the document declared no tag."""
-    assert read(_write(tmp_path / "untagged.yaml", "name: x\n")).schema is None
+    document = read(_write(tmp_path / "untagged.yaml", "name: x\n"))
+    assert document.schema is None
+    assert document.schema_declared is False
+
+
+def test_a_declared_null_schema_is_distinguishable_from_no_schema_key(tmp_path: Path) -> None:
+    """CP-1: ``schema:`` and ``schema: null`` declare the key with a null value; an absent key declares none.
+
+    The value alone cannot tell the two cases apart, so the record carries the presence bit: a consumer that
+    re-adds a declared key to its model (the product's loader) must keep a declared null, not drop it.
+    """
+    declared = read(_write(tmp_path / "null.yaml", "schema: null\nname: x\n"))
+    assert declared.schema is None
+    assert declared.schema_declared is True
+    assert "schema" not in declared.payload
+
+    absent = read(_write(tmp_path / "absent.yaml", "name: x\n"))
+    assert absent.schema is None
+    assert absent.schema_declared is False
 
 
 def test_resolves_a_relative_path_against_the_documents_own_directory(

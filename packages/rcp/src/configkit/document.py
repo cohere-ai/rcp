@@ -6,7 +6,8 @@ keeps them:
 1. the document is UTF-8 text, and a file that is not is refused naming the file;
 2. a duplicate key is refused: a duplicate can hide a value, and a hidden value breaks reproducibility;
 3. a required ``schema`` key must equal the id the caller passes (:func:`read`'s ``schema_id`` parameter), and
-   the key is popped into :attr:`Document.schema` so no model ever receives it;
+   the key is popped into :attr:`Document.schema` (with the presence bit :attr:`Document.schema_declared`) so
+   no model ever receives it;
 4. a relative ``PATH`` value resolves against the document's own directory, and an absolute one is kept;
 5. the resolution happens before anything hashes the payload, so a moved local file changes the identity.
 
@@ -158,14 +159,19 @@ class Document:
             process's working directory.
         payload: The mapping: every ``extends`` chain merged under the child, the ``extends`` and ``schema`` keys
             popped, and no value validated. A reader must not mutate it; :func:`resolve` copies what it changes.
-        schema: The schema id the document declared in its ``schema`` key, or ``None`` when it declared none. The
-            key is not in :attr:`payload`: a model declares ``schema_id`` and never receives the document's tag.
+        schema: The schema id the document declared in its ``schema`` key, or ``None`` when it declared none or
+            declared it null. The key is not in :attr:`payload`: a model declares ``schema_id`` and never receives
+            the document's tag.
+        schema_declared: Whether the merged document carried the ``schema`` key at all. ``schema: null`` and a
+            blank ``schema:`` declare the key with a null value, which :attr:`schema` alone cannot distinguish
+            from an absent key; a consumer that keeps a declared key must read this bit, not the value.
     """
 
     path: Path
     base: Path
     payload: Mapping[str, Any]
     schema: str | None = None
+    schema_declared: bool = False
 
 
 def _check_keys(node: Any, path: Path, *, seen: set[int]) -> None:
@@ -319,6 +325,7 @@ def read(
     """
     resolved = Path(path).resolve()
     payload = _merged(resolved, (), extends=extends, yaml_hint=yaml_hint, on_file=on_file)
+    schema_declared = _SCHEMA in payload
     declared = payload.pop(_SCHEMA, None)
     if schema_id is not None and declared != schema_id:
         raise _refuse(
@@ -327,7 +334,9 @@ def read(
             schema=declared,
             expected=schema_id,
         )
-    return Document(path=Path(path), base=resolved.parent, payload=payload, schema=declared)
+    return Document(
+        path=Path(path), base=resolved.parent, payload=payload, schema=declared, schema_declared=schema_declared
+    )
 
 
 def _path_rows(model: type[BaseModel], extra: Sequence[Sequence[str]]) -> tuple[tuple[str, ...], ...]:

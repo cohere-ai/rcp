@@ -57,6 +57,20 @@ class TestValidation:
         with pytest.raises(ConfigError, match="depht"):
             RunConfig.load(_write(tmp_path / "r2.yaml", {"dataset": DATASET}), overrides=["candidates.depht=10"])
 
+    def test_a_declared_null_schema_is_refused_as_an_unknown_key(self, tmp_path: Path) -> None:
+        """CP-1: a run config declares no ``schema`` key, and a declared null is still a declaration.
+
+        The loader used to re-add the key only when its value was not ``None``, so ``schema: null`` -- and a
+        blank ``schema:`` -- was dropped and this model accepted a key it has no field for. A refusal, not a
+        silent acceptance: the key stays and the model names it.
+        """
+        path = _write(
+            tmp_path / "run.yaml",
+            {"schema": None, "dataset": DATASET, "judge": "fake", "steps": ["evaluate"]},
+        )
+        with pytest.raises(ConfigError, match="schema"):
+            RunConfig.load(path)
+
     def test_steps_run_in_pipeline_order(self) -> None:
         config = RunConfig(dataset=DATASET, judge="fake", steps=["evaluate", "rubric", "calibrate", "tournament"])
         assert config.ordered_steps == ["tournament", "rubric", "calibrate", "evaluate"]

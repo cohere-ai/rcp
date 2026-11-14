@@ -92,3 +92,14 @@ def test_a_stray_schema_key_is_not_dropped_silently(tmp_path: Path) -> None:
     unknown key instead of the reader dropping it."""
     path = _write(tmp_path / "run.yaml", "schema: not-a-run-config\nname: x\n")
     assert load_config(path) == {"schema": "not-a-run-config", "name": "x"}
+
+
+@pytest.mark.parametrize("declared", ["schema: null\nname: x\n", "schema:\nname: x\n"])
+def test_a_declared_null_schema_is_not_dropped_silently(tmp_path: Path, declared: str) -> None:
+    """CP-1: a declared null is a declaration, not an absent key, so the loader keeps it for the model to refuse.
+
+    The value alone (``None``) could not tell the two apart, so the library records whether the key was there;
+    the product re-adds the key on that bit. Before the bit, both spellings were dropped and a run config
+    accepted a key it declares no field for.
+    """
+    assert load_config(_write(tmp_path / "run.yaml", declared)) == {"schema": None, "name": "x"}

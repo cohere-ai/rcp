@@ -116,9 +116,10 @@ def load_config(
         # the product's exit number.
         raise ConfigError(fault.message, hint=fault.hint, cli_hint=fault.cli_hint, details=fault.details) from fault
     payload = loaded.payload
-    if loaded.schema is not None:
+    if loaded.schema_declared:
         # A run config declares no `schema` key: it stays in the mapping so the model refuses it as an unknown
-        # key, instead of the reader dropping it (nothing is cut silently).
+        # key, instead of the reader dropping it (nothing is cut silently). The presence bit, not the value: a
+        # declared `schema: null` is a declaration too, and the value alone cannot tell it from an absent key.
         payload = {**payload, "schema": loaded.schema}
     return apply_overrides(payload, overrides)
 
