@@ -92,6 +92,10 @@ seam is a `Ports` field: a second consumer's `configure` removed the first consu
 seen once per process instead of once per record. Still no public name: `configkit` is in no `PUBLIC_MODULES`
 entry, so `tests/contract/snapshots/` does not move.
 
+The root that state writes under is the consumer's `Brand.name`: `configkit` when a consumer passes no brand, and
+its own program name when it does, so the library writes under no other program's root. A consumer's handler on
+`rcp` receives the library's lines because the library's loggers sit under the consumer's brand, not beside it.
+
 ### Dependencies
 
 The lock carries the windows the shipped engine release (`vllm` `v0.33.0`, the tag the serving image is built

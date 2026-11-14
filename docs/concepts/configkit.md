@@ -597,7 +597,7 @@ class Tensor(Protocol): ...      # typing-only; imports nothing (emb-train 29)
 
 @dataclass
 class LogState:                  # the facade's state, one per record (M2)
-    root: str                    # the root every logger the facade hands out sits under
+    brand: Brand                 # the log root is brand.name (M3): configkit unless the consumer passes its own
 
 @dataclass(frozen=True)
 class Ports:
@@ -620,7 +620,8 @@ and then omitted the two services its own storage module calls.
 
 **A log facade, and no `print`** (rcp 35; emb-train 31). Round 1 mis-stated rcp 35 as a hint rule; it is about a
 logger. `logger(log, name)`, `configure(log, sink, *, level, dedup_key)` and `once(log, key)` live here. They read
-`Ports.log`, one state per record, so two records share no handler and no dedup key (M2). One configurable sink,
+`Ports.log`, one state per record, so two records share no handler and no dedup key (M2). The root is the
+consumer's `Brand.name` (M3), so the library writes under no other program's root. One configurable sink,
 no handler installed at import, and dedup as a parameter. `support/logging.py` is the model; it installs no
 handler at import except the run-log exception, and that exception moves to `storage`. `annotation/annotate.py:51`
 calls `print` today.

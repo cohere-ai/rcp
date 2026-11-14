@@ -4,6 +4,8 @@ The library names the seam and builds no graph (emb-train 22): a consumer inject
 exit-code table, renderer, atomic writer and URI reader/writer. ``logger``/``configure``/``once`` are the log
 facade -- the library creates loggers and installs no handler until ``configure`` is called (rcp-35) -- and the
 state they read is a ``LogState`` the record carries (M2), so two records never share a handler or a dedup key.
+The root that state writes under is the consumer's ``Brand.name`` (M3): ``configkit`` by default, never another
+program's root.
 """
 
 from __future__ import annotations
@@ -17,6 +19,7 @@ from pathlib import Path
 
 import pytest
 from configkit.ports import LogState, Ports, configure, logger, once
+from configkit.spec import Brand
 
 #: The logger roots this module configures: the library's default, and the brand a test passes.
 _ROOTS = ("configkit", "acme")
@@ -214,3 +217,22 @@ def test_a_second_records_configure_leaves_the_firsts_handler_installed() -> Non
     logger(first.log, "configkit.ports").warning("first")
     assert first_sink.lines == ["WARNING configkit.ports: first"]
     assert second_sink.lines == ["WARNING configkit.ports: first"]  # one root, one logger: both handlers see it
+
+
+def test_the_log_root_is_the_brands_name() -> None:
+    """M3: the root is the consumer's ``Brand.name`` -- ``configkit`` by default, and no other program's root.
+
+    Red before the brand: the root was a fixed string, so a consumer that runs the library under its own name
+    had every library line written under ``configkit`` and its handler installed on ``configkit`` only.
+    """
+    assert LogState().root == "configkit"
+    assert logger(LogState(), "faults").name == "configkit.faults"
+    acme = Brand(name="acme", prefix="ACME", schema_root="acme.cli.v1", output_schema_prefix="acme.run")
+    state = LogState(brand=acme)
+    assert state.root == "acme"
+    assert logger(state, "faults").name == "acme.faults"
+    assert logger(state, "acme.faults").name == "acme.faults"
+    sink = _Sink()
+    configure(state, sink)
+    logger(state, "faults").warning("hello")
+    assert sink.lines == ["WARNING acme.faults: hello"]

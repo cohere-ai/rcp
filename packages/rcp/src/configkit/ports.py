@@ -8,7 +8,8 @@ library module calls -- ``storage`` takes ``Ports.atomic`` and ``Ports.uri``, ne
 ``logger``/``configure``/``once`` are the log facade (rcp-35): the library creates loggers and installs no
 handler until ``configure`` is called, so importing it changes nothing about the host's logging, and dedup is a
 parameter rather than a policy. The facade's state is a :class:`LogState` the record carries, so two records
-never share a handler or a dedup key (M2).
+never share a handler or a dedup key (M2), and its root is the consumer's :class:`~configkit.spec.Brand` name,
+so the library writes under no other program's root (M3).
 
 ``Tensor`` is typing-only: it names the array shape the numeric fits read, and this module imports no engine
 (emb-train 29).
@@ -22,6 +23,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
+
+from configkit.spec import Brand
 
 __all__ = [
     "AtomicWriter",
@@ -38,6 +41,15 @@ __all__ = [
     "logger",
     "once",
 ]
+
+
+#: The brand the facade writes under when the consumer passes none: the library's own name, never another's.
+_LIBRARY_BRAND = Brand(
+    name="configkit", prefix="CONFIGKIT", schema_root="configkit.v1", output_schema_prefix="configkit.run"
+)
+
+#: The one line format ``configure`` installs: level, logger name, message.
+_FORMAT = "%(levelname)s %(name)s: %(message)s"
 
 
 class Clock(Protocol):
@@ -139,20 +151,26 @@ class Tensor(Protocol):
 
 @dataclass
 class LogState:
-    """One record's log facade state: the root, the handler it installed, the dedup keys and the lock.
+    """One record's log facade state: the brand, the handler it installed, the dedup keys and the lock.
 
     ``Ports`` carries one per record, so no two records share a handler or a dedup key. The logging module's
     logger for a root is process-wide -- that is the logging module's contract, not the facade's state -- so what
     this record owns is the handler it installed and the keys it has seen.
 
     Attributes:
-        root: The logger root every logger the facade hands out sits under.
+        brand: The consumer's :class:`~configkit.spec.Brand`; its ``name`` is the log root, so the library writes
+            under ``configkit`` unless a consumer passes its own brand.
     """
 
-    root: str = "configkit"
+    brand: Brand = _LIBRARY_BRAND
     _handler: logging.Handler | None = field(default=None, init=False, repr=False)
     _seen: set[str] = field(default_factory=set, init=False, repr=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
+
+    @property
+    def root(self) -> str:
+        """The root every logger the facade hands out sits under: the brand's program name."""
+        return self.brand.name
 
 
 @dataclass(frozen=True)
@@ -167,7 +185,7 @@ class Ports:
         renderer: The front end's renderer for a command result.
         atomic: The atomic-write seam: one file, one swap.
         uri: The URI reader/writer seam, routed by scheme by the implementation.
-        log: The log facade's state: one per record, so no two records share a handler.
+        log: The log facade's state: one per record, whose root is the consumer's brand name.
     """
 
     clock: Clock
@@ -178,10 +196,6 @@ class Ports:
     atomic: AtomicWriter
     uri: UriIO
     log: LogState = field(default_factory=LogState)
-
-
-#: The one line format ``configure`` installs: level, logger name, message.
-_FORMAT = "%(levelname)s %(name)s: %(message)s"
 
 
 class _SinkHandler(logging.Handler):
