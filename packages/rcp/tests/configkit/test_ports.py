@@ -107,11 +107,20 @@ def test_ports_carries_the_seven_services_and_is_frozen() -> None:
 
 
 def test_importing_the_module_installs_no_handler(tmp_path: Path) -> None:
-    """rcp-35: an import changes nothing about the host's logging."""
-    code = "import logging, configkit.ports; print(len(logging.getLogger('configkit').handlers))"
+    """rcp-35: an import changes nothing about the host's logging -- the root logger's handlers and the package's.
+
+    Both are counted, because ``logging.basicConfig()`` at module level would touch the root logger while leaving
+    ``configkit``'s handler list empty: a check of the package logger alone cannot see that defect.
+    """
+    code = (
+        "import logging\n"
+        "before = len(logging.getLogger().handlers)\n"
+        "import configkit.ports\n"
+        "print(before, len(logging.getLogger().handlers), len(logging.getLogger('configkit').handlers))\n"
+    )
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, cwd=tmp_path, check=False)
     assert result.returncode == 0, result.stderr
-    assert result.stdout.strip() == "0"
+    assert result.stdout.split() == ["0", "0", "0"]
 
 
 def test_configure_sends_the_librarys_records_to_the_sink() -> None:

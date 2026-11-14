@@ -11,6 +11,23 @@ implementation plan.
 card and never reordered. ``rcp`` imports ``from configkit.<module>``; it re-exports none of these names.
 """
 
+from configkit.commands import (
+    Command,
+    CommandTree,
+    DoctorFacts,
+    OptionSpec,
+    Step,
+    StepResults,
+    Verb,
+    build_parser,
+    customise,
+    describe,
+    envelope,
+    index,
+    option_specs,
+    run_steps,
+    tool,
+)
 from configkit.document import (
     Applied,
     Document,
@@ -83,6 +100,22 @@ from configkit.schemas import (
 from configkit.spec import Brand, FrozenSpec, OperationOptions, OptionSchema, frozen_mapping, frozen_sequence
 
 __all__ = [
+    # commands.py
+    "Command",
+    "Verb",
+    "CommandTree",
+    "DoctorFacts",
+    "Step",
+    "StepResults",
+    "OptionSpec",
+    "option_specs",
+    "build_parser",
+    "index",
+    "describe",
+    "tool",
+    "envelope",
+    "run_steps",
+    "customise",
     # document.py
     "Document",
     "read",
