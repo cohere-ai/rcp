@@ -182,6 +182,18 @@ def test_dataset_ref_parses_a_named_scheme() -> None:
     ref = DatasetRef.parse("beir:scifact")
     assert (ref.scheme, ref.repo, ref.subset, ref.revision) == ("beir", "scifact", None, None)
     assert ref.as_uri() == "beir:scifact"
+
+
+@pytest.mark.parametrize(("written", "scheme"), [("HF://owner/repo", "hf"), ("BEIR:scifact", "beir")])
+def test_the_scheme_is_lowercased_before_it_is_matched(written: str, scheme: str) -> None:
+    """L9: the record documents a lower-case scheme and never lowercased it.
+
+    ``HF://owner/repo`` was refused as a non-Hub reference ("only an 'hf://' reference names a repository
+    path") and ``BEIR:scifact`` kept its upper case, so two spellings of one dataset were two records.
+    """
+    ref = DatasetRef.parse(written)
+    assert ref.scheme == scheme
+    assert ref.as_uri() == written.lower()
     with pytest.raises(Fault):
         DatasetRef(scheme="beir", repo="scifact", subset="s").as_uri()
 

@@ -251,6 +251,7 @@ class DatasetRef(FrozenSpec):
                 ``//``. ``code`` is ``"value_error"``.
         """
         scheme, separator, rest = uri.partition(":") if isinstance(uri, str) else ("", "", "")
+        scheme = scheme.lower()
         if not separator or not rest.strip():
             raise ValueErrorFault(
                 f"a dataset reference is '<scheme>:<name>', got {uri!r}",
