@@ -75,8 +75,8 @@ def test_lookup_takes_its_entries_as_a_parameter() -> None:
     """F1: the entry points are the call's argument, so two callers in one process never share a lookup."""
     alpha = _Entry("alpha", "acme.plugins.alpha:Plugin")
     beta = _Entry("beta", "acme.plugins.beta:Plugin")
-    assert lookup("acme.plugins", "alpha", [alpha, beta]) is alpha
-    assert lookup("acme.plugins", "beta", [alpha, beta]) is beta
+    assert lookup("acme.plugins", "alpha", [alpha, beta], kind="plugin") is alpha
+    assert lookup("acme.plugins", "beta", [alpha, beta], kind="plugin") is beta
 
 
 def test_no_module_global_registry() -> None:
@@ -96,30 +96,42 @@ def test_two_providers_for_one_name_are_refused_naming_both() -> None:
     first = _Entry("alpha", "acme.plugins.alpha:Plugin")
     second = _Entry("alpha", "other.plugins.alpha:Plugin")
     with pytest.raises(Fault) as raised:
-        lookup("acme.plugins", "alpha", [first, second])
+        lookup("acme.plugins", "alpha", [first, second], kind="metric")
     message = raised.value.message
+    assert "the metric name 'alpha'" in message
     assert "acme.plugins.alpha:Plugin" in message and "other.plugins.alpha:Plugin" in message
     assert raised.value.code == "value_error"
+    # M4: the product's refusal kept the distribution names; only the targets survived here.
+    assert raised.value.details["providers"] == [
+        {"distribution": "acme.plugins.alpha", "target": "acme.plugins.alpha:Plugin"},
+        {"distribution": "other.plugins.alpha", "target": "other.plugins.alpha:Plugin"},
+    ]
 
 
 def test_two_entry_points_of_one_target_are_one_provider() -> None:
     """A distribution that declares the same name and target twice is not a conflict."""
     once = _Entry("alpha", "acme.plugins.alpha:Plugin")
     twice = _Entry("alpha", "acme.plugins.alpha:Plugin")
-    assert lookup("acme.plugins", "alpha", [once, twice]) is once
+    assert lookup("acme.plugins", "alpha", [once, twice], kind="plugin") is once
 
 
 def test_an_unknown_name_is_refused_naming_the_group() -> None:
     """A name nobody provides names the group to look in, so the message says where to install it."""
     with pytest.raises(Fault) as raised:
-        lookup("acme.plugins", "gamma", [_Entry("alpha", "acme.plugins.alpha:Plugin")])
-    assert "gamma" in raised.value.message and "acme.plugins" in raised.value.message
+        lookup("acme.plugins", "gamma", [_Entry("alpha", "acme.plugins.alpha:Plugin")], kind="runner")
+    assert "no runner named 'gamma'" in raised.value.message
+    assert "acme.plugins" in raised.value.message
 
 
 def test_a_provider_that_does_not_load_is_refused_naming_the_plugin() -> None:
     """The load check: a broken plugin is refused at the lookup, naming the plugin and its own failure."""
     with pytest.raises(Fault) as raised:
-        lookup("acme.plugins", "alpha", [_Entry("alpha", "acme.plugins.alpha:Plugin", broken="no module named acme")])
+        lookup(
+            "acme.plugins",
+            "alpha",
+            [_Entry("alpha", "acme.plugins.alpha:Plugin", broken="no module named acme")],
+            kind="plugin",
+        )
     assert "alpha" in raised.value.message and "no module named acme" in raised.value.message
     assert raised.value.code == "runtime_error"
 
@@ -131,7 +143,7 @@ def test_registered_names_lists_each_name_once_sorted() -> None:
         _Entry("alpha", "acme.plugins.alpha:Plugin"),
         _Entry("alpha", "other.plugins.alpha:Plugin"),
     ]
-    assert registered_names("acme.plugins", entries) == ("alpha", "beta")
+    assert registered_names(entries) == ("alpha", "beta")
 
 
 # ---------------------------------------------------------------------------------------------------------------

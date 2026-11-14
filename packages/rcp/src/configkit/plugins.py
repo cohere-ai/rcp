@@ -193,7 +193,7 @@ class Registry(MutableMapping[str, Any]):
         self._hooks.append(hook)
 
 
-def lookup(group: str, name: str, entries: Iterable[Provider]) -> Provider:
+def lookup(group: str, name: str, entries: Iterable[Provider], *, kind: str) -> Provider:
     """The provider of *name* in *group*, checked for ambiguity and for loading.
 
     Args:
@@ -201,30 +201,38 @@ def lookup(group: str, name: str, entries: Iterable[Provider]) -> Provider:
         name: The name to resolve (the entry-point name a flag or a document selects).
         entries: The group's entry points, as the caller fetched them. This is the whole registry: the module
             holds none.
+        kind: What the name selects (``"dataset format"``, ``"result sink"``, ``"runner"``), for the message: a
+            refusal that says "the plugin name 'x'" when the caller asked for a metric is a refusal a reader has
+            to translate.
 
     Returns:
         The provider record. Its ``load()`` has already been exercised once by this call, so the caller's own
         ``load()`` cannot be the first to discover a broken plugin.
 
     Raises:
-        Fault: more than one installed distribution provides *name* (``details["providers"]`` names them), no
-            provider does (``details["group"]`` names the group), or the provider does not load
-            (``details["provider"]`` names it and the message carries the plugin's own failure). ``code`` is
-            ``"value_error"`` for the two lookups and ``"runtime_error"`` for the load.
+        Fault: more than one installed distribution provides *name* (``details["providers"]`` names each
+            distribution and target), no provider does (``details["group"]`` names the group), or the provider
+            does not load (``details["provider"]`` names it and the message carries the plugin's own failure).
+            ``code`` is ``"value_error"`` for the two lookups and ``"runtime_error"`` for the load.
     """
     candidates = [entry for entry in entries if entry.name == name]
     providers = sorted({_origin(entry) for entry in candidates})
     if len(providers) > 1:
         where = ", ".join(f"{distribution} ({value})" for distribution, value in providers)
         raise ValueErrorFault(
-            f"the plugin name {name!r} is provided by more than one installed distribution: {where}",
-            details={"name": name, "group": group, "providers": [value for _, value in providers]},
+            f"the {kind} name {name!r} is provided by more than one installed distribution: {where}",
+            details={
+                "name": name,
+                "group": group,
+                "kind": kind,
+                "providers": [{"distribution": distribution, "target": value} for distribution, value in providers],
+            },
             hint=f"uninstall all but one of them, or rename one entry point in the {group!r} group",
         )
     if not candidates:
         raise ValueErrorFault(
-            f"no plugin named {name!r} is installed in the {group!r} entry-point group",
-            details={"name": name, "group": group},
+            f"no {kind} named {name!r} is installed in the {group!r} entry-point group",
+            details={"name": name, "group": group, "kind": kind},
             hint="install the package that provides it, or drop the name",
         )
     chosen = candidates[0]
@@ -239,18 +247,16 @@ def lookup(group: str, name: str, entries: Iterable[Provider]) -> Provider:
     return chosen
 
 
-def registered_names(group: str, entries: Iterable[Provider]) -> tuple[str, ...]:
-    """The names registered in *group*, sorted, each once.
+def registered_names(entries: Iterable[Provider]) -> tuple[str, ...]:
+    """The names registered in one group, sorted, each once.
 
     Args:
-        group: The group's name. A listing needs it for nothing; the parameter keeps the call symmetric with
-            :func:`lookup`, where it names the group in a refusal.
-        entries: The group's entry points.
+        entries: The group's entry points. The caller fetched its own group, so the group's name is not a
+            parameter: a listing needs it for nothing, and the product's own ``registered_names`` is dropping it.
 
     Returns:
         The names, sorted; a name two providers declare appears once.
     """
-    del group  # a listing names the group's names; only a refusal needs the group's name
     return tuple(sorted({entry.name for entry in entries}))
 
 
