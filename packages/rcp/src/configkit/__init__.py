@@ -11,6 +11,20 @@ implementation plan.
 card and never reordered. ``rcp`` imports ``from configkit.<module>``; it re-exports none of these names.
 """
 
+from configkit.document import (
+    Applied,
+    Document,
+    FieldTypes,
+    config_error,
+    deep_merge,
+    leaf_paths,
+    load,
+    read,
+    register_field_type,
+    resolve,
+    resolve_reference,
+    validate,
+)
 from configkit.faults import (
     FAULT_CODES,
     WARNING_CODES,
@@ -39,6 +53,19 @@ from configkit.roles import Role, identity_of, local_inputs, path_fields, redact
 from configkit.spec import Brand, FrozenSpec, OperationOptions, OptionSchema, frozen_mapping, frozen_sequence
 
 __all__ = [
+    # document.py
+    "Document",
+    "read",
+    "resolve",
+    "validate",
+    "load",
+    "deep_merge",
+    "Applied",
+    "config_error",
+    "FieldTypes",
+    "register_field_type",
+    "leaf_paths",
+    "resolve_reference",
     # faults.py
     "Fault",
     "FAULT_CODES",

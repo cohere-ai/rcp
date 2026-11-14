@@ -1,0 +1,410 @@
+"""The one loader: the five v0 rules, the two bases, lazy YAML and the one validation-error mapper.
+
+The five rules are ``emb-train``'s (``emb_train_cli/config.py:5-18``), kept and parameterised: the document is
+UTF-8; a duplicate key is refused; the ``schema`` id is checked against an id the caller passes; a relative
+``PATH`` value resolves against the document's own directory (an absolute one is kept); and the resolution
+happens before anything hashes the payload. Two rules changed and the module says so: YAML is read (lazily, so a
+JSON document never imports it) and ``extends`` is honoured.
+
+Every document is built in ``tmp_path``: a test that resolved against the checkout would pass for the wrong
+reason, and the two-base rule is only visible from a directory other than the working one.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import sys
+from collections.abc import Mapping
+from dataclasses import FrozenInstanceError
+from pathlib import Path
+from typing import Any, ClassVar
+
+import pytest
+from configkit.document import (
+    Applied,
+    Document,
+    FieldTypes,
+    config_error,
+    deep_merge,
+    leaf_paths,
+    load,
+    read,
+    register_field_type,
+    resolve,
+    resolve_reference,
+    validate,
+)
+from configkit.faults import Fault
+from configkit.roles import Role, identity_of
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
+
+
+class _Doc(BaseModel):
+    """A document with the id, two PATH leaves and one CONTENT leaf."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_id: str = ""
+    source: str
+    output: str
+    name: str
+
+    IDENTITY_ROLES: ClassVar[dict[str, Any]] = {
+        "schema_id": Role.CONTENT,
+        "source": Role.PATH,
+        "output": Role.PATH,
+        "name": Role.CONTENT,
+    }
+
+
+class _Secrets(BaseModel):
+    """A model whose first field is a SECRET: the redaction test's subject."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    secret: int
+    name: str
+
+    IDENTITY_ROLES: ClassVar[dict[str, Any]] = {"secret": Role.SECRET, "name": Role.CONTENT}
+
+
+class _Inner(BaseModel):
+    """A nested model with one leaf."""
+
+    weight: int
+
+
+class _Outer(BaseModel):
+    """A model with a scalar leaf, a nested model and a list of models: three shapes ``leaf_paths`` walks."""
+
+    name: str
+    inner: _Inner
+    items: list[_Inner]
+
+
+class _Defaults(BaseModel):
+    """A model whose nested block is a ``default_factory``: ``model_construct`` makes it a real instance."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    inner: _Inner = Field(default_factory=lambda: _Inner(weight=1))
+
+    IDENTITY_ROLES: ClassVar[dict[str, Any]] = {"inner": Role.CONTENT}
+
+
+def _write(path: Path, text: str) -> Path:
+    """Write *text* to *path* as UTF-8, creating the directory, and return the path."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+# --- the five v0 rules ---------------------------------------------------------------------------------------
+
+
+def test_utf8_document_reads_and_a_decode_failure_names_the_file(tmp_path: Path) -> None:
+    """Rule 1: the document is UTF-8; a file that is not UTF-8 is refused with its own name."""
+    path = _write(tmp_path / "doc.yaml", "name: caf\u00e9\n")
+    assert read(path).payload["name"] == "caf\u00e9"
+
+    broken = tmp_path / "broken.yaml"
+    broken.write_bytes(b"name: \xff\n")
+    with pytest.raises(Fault) as caught:
+        read(broken)
+    assert "broken.yaml" in caught.value.message
+    assert caught.value.code == "value_error"
+
+
+def test_duplicate_key_is_refused_with_the_key_and_the_file(tmp_path: Path) -> None:
+    """Rule 2: a duplicate key can hide a value, so YAML and JSON both refuse it."""
+    yaml_doc = _write(tmp_path / "dup.yaml", "name: a\nname: b\n")
+    with pytest.raises(Fault) as caught:
+        read(yaml_doc)
+    assert "'name'" in caught.value.message and "dup.yaml" in caught.value.message
+
+    json_doc = _write(tmp_path / "dup.json", json.dumps({"name": "a"}).replace("}", ', "name": "b"}'))
+    with pytest.raises(Fault) as caught:
+        read(json_doc)
+    assert "'name'" in caught.value.message and "dup.json" in caught.value.message
+
+
+def test_schema_id_is_a_parameter_and_is_checked_only_when_given(tmp_path: Path) -> None:
+    """Rule 3: the required id is the caller's parameter; a missing or different id is refused by name."""
+    matching = _write(tmp_path / "matching.yaml", "schema: p.doc.v1\nname: x\n")
+    assert read(matching, schema_id="p.doc.v1").payload["name"] == "x"
+
+    absent = _write(tmp_path / "absent.yaml", "name: x\n")
+    assert read(absent).payload["name"] == "x"  # no id named, no check: the model may declare it
+    with pytest.raises(Fault) as caught:
+        read(absent, schema_id="p.doc.v1")
+    assert "p.doc.v1" in caught.value.message and "absent.yaml" in caught.value.message
+
+    other = _write(tmp_path / "other.yaml", "schema: p.other.v1\nname: x\n")
+    with pytest.raises(Fault) as caught:
+        read(other, schema_id="p.doc.v1")
+    assert "p.other.v1" in caught.value.message and "p.doc.v1" in caught.value.message
+
+
+def test_resolves_a_relative_path_against_the_documents_own_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Rule 4: the document's directory is the base, never the process's working directory."""
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    path = _write(
+        tmp_path / "config" / "doc.yaml",
+        "source: data/inputs.jsonl\noutput: runs\nname: x\n",
+    )
+    resolved = load(path, _Doc)
+    assert resolved.source == str((tmp_path / "config" / "data/inputs.jsonl").resolve())
+    assert resolved.output == str((tmp_path / "config" / "runs").resolve())
+    assert not resolved.source.startswith(str(elsewhere))
+
+
+def test_resolution_happens_before_hashing(tmp_path: Path) -> None:
+    """Rule 5: two documents that differ only in where they live are two fingerprints, not one."""
+
+    def digest(payload: Mapping[str, Any]) -> str:
+        return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
+
+    text = "source: data/inputs.jsonl\noutput: runs\nname: x\n"
+    first = load(_write(tmp_path / "a" / "doc.yaml", text), _Doc)
+    second = load(_write(tmp_path / "b" / "doc.yaml", text), _Doc)
+    assert digest(read(tmp_path / "a" / "doc.yaml").payload) == digest(read(tmp_path / "b" / "doc.yaml").payload)
+    assert digest({"source": first.source}) != digest({"source": second.source})
+
+
+# --- the two bases, and the absolute-path rule ---------------------------------------------------------------
+
+
+def test_two_bases_the_document_directory_and_an_absolute_path(tmp_path: Path) -> None:
+    """A relative PATH resolves against the document; an absolute one is kept unchanged."""
+    absolute = str((tmp_path / "absolute" / "out").resolve())
+    path = _write(tmp_path / "config" / "doc.yaml", f"source: data/inputs.jsonl\noutput: {absolute}\nname: x\n")
+    document = read(path)
+    assert document.base == (tmp_path / "config").resolve()
+    resolved = resolve(document, _Doc)
+    assert resolved.source == str((tmp_path / "config" / "data/inputs.jsonl").resolve())
+    assert resolved.output == absolute
+
+
+def test_a_path_fields_row_written_as_one_string_is_refused(tmp_path: Path) -> None:
+    """A string is a sequence of characters: a dotted row would walk ``s``, ``o``, ``u``... and resolve nothing."""
+    path = _write(tmp_path / "doc.yaml", "source: data\noutput: runs\nname: x\n")
+    with pytest.raises(Fault) as caught:
+        resolve(read(path), _Doc, path_fields=["source"])
+    assert "path_fields" in caught.value.message
+
+
+# --- lazy YAML -----------------------------------------------------------------------------------------------
+
+
+def test_yaml_absent_raises_optional_missing_with_the_callers_hint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """C4: a JSON document never imports YAML; a YAML one refuses with the caller's install line."""
+    yaml_doc = _write(tmp_path / "doc.yaml", "name: x\n")
+    json_doc = _write(tmp_path / "doc.json", json.dumps({"name": "x"}))
+    monkeypatch.setitem(sys.modules, "yaml", None)
+
+    hint = "pip install <the-callers-extra>"
+    with pytest.raises(Fault) as caught:
+        read(yaml_doc, yaml_hint=hint)
+    assert caught.value.code == "optional.missing"
+    assert caught.value.hint == hint
+    assert hint in caught.value.message
+
+    assert read(json_doc).payload == {"name": "x"}
+
+
+# --- the validation-error mapper -----------------------------------------------------------------------------
+
+
+def test_config_error_names_the_field_the_expected_type_the_known_keys_and_redacts_a_secret() -> None:
+    """rcp 14: one fault per problem, with the field path, the expected type, the known keys and no secret."""
+    with pytest.raises(ValidationError) as caught:
+        _Secrets.model_validate({"secret": "abc", "name": "x"})
+    fault = config_error(caught.value, model=_Secrets, source="dev.yaml")
+    problem = fault.details["errors"][0]
+    assert problem["field"] == "secret"
+    assert problem["expected"] == "int"
+    assert problem["input"] == "<redacted>"
+    assert "abc" not in fault.message
+    assert "dev.yaml" in fault.message and "secret" in fault.message
+
+    with pytest.raises(ValidationError) as caught:
+        _Secrets.model_validate({"secret": 1, "name": "x", "nam": "y"})
+    fault = config_error(caught.value, model=_Secrets, source="dev.yaml")
+    problem = fault.details["errors"][0]
+    assert problem["field"] == "nam"
+    assert problem["known"] == ["name", "secret"]
+    assert problem["did_you_mean"] == "name"
+
+
+# --- extends ------------------------------------------------------------------------------------------------
+
+
+def test_an_unknown_key_is_refused_by_the_loader_not_dropped(tmp_path: Path) -> None:
+    """A typo in a document fails here, not silently: ``model_construct`` would drop the key."""
+    path = _write(tmp_path / "typo.yaml", "source: data\noutput: runs\nnam: x\n")
+    with pytest.raises(Fault) as caught:
+        load(path, _Doc)
+    assert "'nam'" in caught.value.message
+    assert caught.value.details["known"] == ["name", "output", "schema_id", "source"]
+
+
+def test_extends_merges_the_base_under_the_child(tmp_path: Path) -> None:
+    """ds-B1: the base is deep-merged *under* the child, relative to the extending file, and popped."""
+    _write(
+        tmp_path / "base.yaml",
+        "name: base\nscalar: 1\nnested:\n  a: 1\n  b: 2\n",
+    )
+    child = _write(
+        tmp_path / "config" / "child.yaml",
+        "extends: ../base.yaml\nname: child\nnested:\n  b: 3\n",
+    )
+    payload = read(child).payload
+    assert payload == {"name": "child", "scalar": 1, "nested": {"a": 1, "b": 3}}
+
+    with pytest.raises(Fault) as caught:
+        read(child, extends=False)
+    assert "extends" in caught.value.message and "child.yaml" in caught.value.message
+
+
+def test_a_cycle_is_refused_naming_both_files(tmp_path: Path) -> None:
+    """ds-B1: a file that reaches itself is refused, and the message names the chain."""
+    first = _write(tmp_path / "first.yaml", "extends: second.yaml\nname: first\n")
+    _write(tmp_path / "second.yaml", "extends: first.yaml\nname: second\n")
+    with pytest.raises(Fault) as caught:
+        read(first)
+    assert "first.yaml" in caught.value.message and "second.yaml" in caught.value.message
+
+
+# --- the rest of the module's surface -----------------------------------------------------------------------
+
+
+def test_deep_merge_puts_the_base_under_the_child_recursively(tmp_path: Path) -> None:
+    """``deep_merge`` is the ``extends`` rule's one implementation: mappings merge, anything else is replaced."""
+    base = {"a": 1, "nested": {"x": 1, "y": 2}, "items": [1, 2]}
+    child = {"a": 2, "nested": {"y": 3}, "items": [9]}
+    merged = deep_merge(base, child)
+    assert merged == {"a": 2, "nested": {"x": 1, "y": 3}, "items": [9]}
+    assert merged["nested"] is not base["nested"]
+    assert merged["items"] is not child["items"]
+    assert base == {"a": 1, "nested": {"x": 1, "y": 2}, "items": [1, 2]}
+    assert child == {"a": 2, "nested": {"y": 3}, "items": [9]}
+
+
+def test_resolve_returns_an_unvalidated_draft_and_validate_rebuilds_it(tmp_path: Path) -> None:
+    """``resolve`` is ``model_construct``; ``validate`` is the only stage that runs pydantic."""
+    path = _write(tmp_path / "doc.yaml", "source: data\noutput: runs\nname: x\n")
+    draft = resolve(read(path), _Doc)
+    assert isinstance(draft, _Doc)
+    assert validate(draft) == _Doc(
+        source=str((tmp_path / "data").resolve()), output=str((tmp_path / "runs").resolve()), name="x"
+    )
+
+    invalid = _write(tmp_path / "invalid.yaml", "source: data\noutput: runs\n")
+    draft = resolve(read(invalid), _Doc)
+    with pytest.raises(ValidationError):
+        validate(draft)
+    with pytest.raises(Fault) as caught:
+        load(invalid, _Doc)
+    assert caught.value.details["errors"][0]["field"] == "name"
+
+
+def test_validate_reads_the_drafts_nested_model_back_as_data() -> None:
+    """``model_construct`` fills a ``default_factory`` model as an instance; ``validate`` still checks its values."""
+    draft = _Defaults.model_construct(inner=_Inner.model_construct(weight="not-a-number"))
+    with pytest.raises(ValidationError):
+        validate(draft)
+
+
+def test_field_types_are_registered_per_registry_and_never_globally() -> None:
+    """rcp 19: the registry is the caller's, a duplicate registration is refused, and it leaks nowhere."""
+
+    class _Endpoint(BaseModel):
+        url: str
+
+    class _Service(BaseModel):
+        endpoint: _Endpoint
+
+    registry = FieldTypes()
+    register_field_type(registry, _Endpoint, lambda value: {**value, "url": f"https://{value['url']}"})
+    draft = _Service.model_construct(endpoint={"url": "host/v1"})
+    assert validate(draft, field_types=registry).endpoint.url == "https://host/v1"
+    assert validate(draft).endpoint.url == "host/v1"
+    assert FieldTypes().validator_for(_Endpoint) is None
+    with pytest.raises(Fault):
+        register_field_type(registry, _Endpoint, lambda value: value)
+
+
+def test_field_types_schema_hook_composes_the_registered_hook() -> None:
+    """The registry composes the JSON schema: the validator's own hook, else pydantic's."""
+
+    class _Endpoint(BaseModel):
+        url: str
+
+    class _Validator:
+        def __call__(self, value: Any) -> Any:
+            return value
+
+        @classmethod
+        def __get_pydantic_json_schema__(cls, core_schema: Any, handler: Any) -> Any:
+            return {"type": "string", "format": "uri"}
+
+    registry = FieldTypes()
+    register_field_type(registry, _Endpoint, _Validator())
+    assert registry.schema_hook(_Endpoint)(None, lambda core: {"type": "object"}) == {
+        "type": "string",
+        "format": "uri",
+    }
+    assert registry.schema_hook(_Inner)(None, lambda core: {"type": "object"}) == {"type": "object"}
+
+
+def test_leaf_paths_lists_every_dotted_leaf_once() -> None:
+    """emb-eval M22: one derived enumeration of a model's leaves, nested models and lists of models included."""
+    assert leaf_paths(_Outer) == ("name", "inner.weight", "items.weight")
+
+
+def test_resolve_reference_reports_the_attempts_it_made(tmp_path: Path) -> None:
+    """rcp 22: a path, a shorthand and a bare name, each reporting the attempt that matched."""
+    path = _write(tmp_path / "dev.yaml", "name: dev\n")
+
+    attempts: list[str] = []
+    assert resolve_reference(str(path), attempts=attempts) == {"name": "dev"}
+    assert attempts == [f"path {str(path)!r}"]
+
+    attempts = []
+    assert resolve_reference("recipe:qwen3-reranker-0.6b", attempts=attempts) == {"recipe": "qwen3-reranker-0.6b"}
+    assert attempts == [f"path {'recipe:qwen3-reranker-0.6b'!r}", "shorthand 'recipe:qwen3-reranker-0.6b'"]
+
+    attempts = []
+    assert resolve_reference("offline", attempts=attempts) == {"name": "offline"}
+    assert attempts == [f"path {'offline'!r}", "shorthand 'offline'", "name 'offline'"]
+
+    with pytest.raises(Fault):
+        resolve_reference("   ", attempts=[])
+
+
+def test_applied_is_a_frozen_record_of_the_model_the_overrides_and_the_payload() -> None:
+    """ee-S5: the record a run's manifest reads back: the model, the overrides applied, the hashed payload."""
+    model = _Doc.model_validate({"source": "/data", "output": "/runs", "name": "x"})
+    applied = Applied(model=model, overrides=(), payload=identity_of(model))
+    assert applied.model is model
+    assert applied.payload == {"schema_id": "", "name": "x"}
+    assert applied.overrides == ()
+    with pytest.raises(FrozenInstanceError):
+        applied.payload = {}  # type: ignore[misc]
+
+
+def test_document_is_a_frozen_record_of_the_path_the_base_and_the_payload(tmp_path: Path) -> None:
+    """The reader returns a record, not a bare mapping: the base is what the resolver uses."""
+    path = _write(tmp_path / "doc.yaml", "name: x\n")
+    document = read(path)
+    assert isinstance(document, Document)
+    assert document.path == path
+    assert document.base == tmp_path.resolve()
+    assert document.payload == {"name": "x"}
