@@ -515,6 +515,16 @@ _TEXT = "config: {}"
 """
 
 
+def test_a_file_reader_is_allowed_by_its_path_not_its_name(tmp_path: Path) -> None:
+    """L12: the allow-list matched ``path.name``, so any future ``document.py`` became a silent second data gate."""
+    elsewhere = _write(tmp_path / "other", {"document.py": _S9})
+    found = scan(elsewhere)
+    assert len(found) == 1, found
+    assert found[0].startswith("S9 "), found[0]
+    allowed = _write(tmp_path / "lib", {"configkit/document.py": _S9})
+    assert scan(allowed) == []
+
+
 def _s9(root: Path, defect: bool) -> list[str]:
     """S9: a file read outside the one document reader and the one byte seam is a second data gate (et-23)."""
     return scan(_write(root, {"loader.py": _S9 if defect else _S9_CLEAN}))

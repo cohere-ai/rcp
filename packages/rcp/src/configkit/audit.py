@@ -89,8 +89,14 @@ _COMMAND_CALLS: Final[frozenset[str]] = frozenset(
 )
 
 #: The modules allowed to read a file, each for a declared reason: the one document reader, the one byte seam, and
-#: this check, which reads the source it checks. Every other module's read is a second data gate (et-23).
-_FILE_READERS: Final[frozenset[str]] = frozenset({"document.py", "storage.py", "audit.py"})
+#: this check, which reads the source it checks. Every other module's read is a second data gate (et-23). The rows
+#: are path suffixes, not bare file names: a ``document.py`` anywhere in a scanned tree is not this ``document.py``,
+#: and matching the name alone would silently allow a second reader.
+_FILE_READERS: Final[tuple[str, ...]] = (
+    "configkit/document.py",
+    "configkit/storage.py",
+    "configkit/audit.py",
+)
 
 #: The audit events :func:`pure` refuses: a file, a socket, a process.
 _PURE_EVENTS: Final[tuple[str, ...]] = ("open", "socket.", "subprocess.")
@@ -509,7 +515,7 @@ def _s8(path: Path, tree: ast.Module, docstrings: frozenset[int], removable: fro
 
 def _s9(path: Path, tree: ast.Module) -> Iterator[str]:
     """S9: a second data gate -- a file read outside the one reader and the one byte seam (et-23)."""
-    if path.name in _FILE_READERS:
+    if path.as_posix().endswith(_FILE_READERS):
         return
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
