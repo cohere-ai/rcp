@@ -587,7 +587,8 @@ def test_the_notice_attributes_every_third_party_recipe_and_plugin_file() -> Non
 # The dependency gates of tests/: every test module that gates on an import gets a CI job that opens the gate.
 # "always" names a dependency of the package itself: every job's environment has it. The rest name the extra
 # that provides the import (one home: rcp.errors.EXTRA_FOR_MODULE), or "direct:" for a distribution that no
-# extra names.
+# extra names. Two kinds are not third-party packages at all: "stdlib" is a module of the interpreter (a POSIX
+# host's ``fcntl``), and "workspace" is one of this checkout's own distributions, which every job installs.
 DEPENDENCY_GATES = {
     "PIL": "always",
     "pyarrow": "always",
@@ -600,6 +601,17 @@ DEPENDENCY_GATES = {
     "transformers": "mteb",  # mteb's own dependency (uv.lock)
     "mcp": "direct:mcp",
     "rcp_vllm": "direct:./packages/rcp-vllm",  # example 09; the sibling installs from the checkout
+    "fcntl": "stdlib",  # the advisory lock is POSIX-only; no job installs the interpreter's own module
+    "rcp": "workspace",  # a library test that runs inside the product tree
+    "rcp_core": "workspace",  # the sibling the product pins, always installed beside it
+}
+
+#: The workspace's distributions, by the import name a gate names: the four ``pyproject.toml`` project names.
+WORKSPACE_DISTRIBUTIONS = {
+    "rcp": "cohere-rcp",
+    "rcp_core": "cohere-rcp-core",
+    "rcp_test": "rcp-test",
+    "rcp_vllm": "cohere-rcp-vllm",
 }
 
 
@@ -624,6 +636,10 @@ def test_every_dependency_gate_in_tests_opens_in_ci() -> None:
         found.update(re.findall(r"importorskip\(\s*[\"']([A-Za-z0-9_]+)", path.read_text(encoding="utf-8")))
     assert found == set(DEPENDENCY_GATES), f"gates and the table disagree: {sorted(found ^ set(DEPENDENCY_GATES))}"
     core = {Requirement(spec).name.lower() for spec in PYPROJECT["project"]["dependencies"]}
+    workspace = {
+        tomllib.loads((ROOT / "packages" / package / "pyproject.toml").read_text(encoding="utf-8"))["project"]["name"]
+        for package in ("rcp", "rcp-core", "rcp-test", "rcp-vllm")
+    }
     lock = tomllib.loads((ROOT / "uv.lock").read_text(encoding="utf-8"))["package"]
     requirement_name = re.compile(r"[A-Za-z0-9._-]+")
     deps_of = {
@@ -637,6 +653,11 @@ def test_every_dependency_gate_in_tests_opens_in_ci() -> None:
         distribution = {"PIL": "pillow"}.get(name, name.replace("_", "-")).lower()
         if provider == "always":
             assert distribution in core, f"{name}: not a core dependency, so no job is guaranteed to have it"
+        elif provider == "stdlib":
+            assert name in sys.stdlib_module_names, f"{name}: the table calls it stdlib, and it is not"
+        elif provider == "workspace":
+            assert name in WORKSPACE_DISTRIBUTIONS, f"{name}: the table calls it a workspace distribution"
+            assert WORKSPACE_DISTRIBUTIONS[name] in workspace, f"{name}: no pyproject of this workspace ships it"
         elif provider.startswith("direct:"):
             pass  # no extra names it: the install line below is its only home
         elif (mapped := EXTRA_FOR_MODULE.get(name)) is not None:
@@ -647,7 +668,9 @@ def test_every_dependency_gate_in_tests_opens_in_ci() -> None:
     # Every provider the table names is opened by one CI job that also runs the whole tests/ tree: the tokens
     # come from that job's own run steps (a shell comment is not an install; tokens do not pool across jobs).
     workflow = __import__("yaml").safe_load((ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8"))
-    providers = {p.removeprefix("direct:") for p in DEPENDENCY_GATES.values() if p != "always"}
+    providers = {
+        p.removeprefix("direct:") for p in DEPENDENCY_GATES.values() if p not in {"always", "stdlib", "workspace"}
+    }
     openings = []
     for job in workflow["jobs"].values():
         code = "\n".join(
