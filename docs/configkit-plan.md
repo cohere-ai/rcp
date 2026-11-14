@@ -454,7 +454,8 @@ print(scan('packages/rcp/src/rcp', seam_prefix='_'))"
 ```
 
 **Expected**: `[]` after the consumer's refactor; before it, the findings are the consumer's remaining seams.
-**Control**: add `from rcp.calibration._projection import x` → a finding names the path.
+**Control**: add `import rcp.calibration._projection` → a finding names the path. The `from ... import x`
+spelling is **not** a control. S5 checks an `ast.ImportFrom`'s *alias*, so a public alias reddens nothing.
 
 **`scan` takes the paths positionally** (`scan(*paths, ...)`): `scan(paths=[...])` raises `TypeError` and the proof
 proves nothing.
