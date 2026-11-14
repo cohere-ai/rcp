@@ -47,7 +47,7 @@ __all__ = [
 
 #: The declared field a document carries its registrations in: ``models.register`` is ``list[Registration]``
 #: (emb-train 20). The name lives here so :func:`register_from` and its refusal spell it once.
-REGISTER_FIELD = "register"
+_REGISTER_FIELD = "register"
 
 
 class Provider(Protocol):
@@ -300,18 +300,18 @@ def register_from(spec: Mapping[str, Any], *, registry: Registry) -> None:
             (``details["index"]``), or a row's target does not import or its name is taken (see :func:`register`).
             ``code`` is ``"value_error"``.
     """
-    rows = spec.get(REGISTER_FIELD)
+    rows = spec.get(_REGISTER_FIELD)
     if rows is None:
         raise ValueErrorFault(
-            f"the declared field {REGISTER_FIELD!r} is absent: a document registers its plugins as "
-            f"'{REGISTER_FIELD}: [{{name: ..., target: ...}}]'",
-            details={"field": REGISTER_FIELD, "known": sorted(spec)},
-            hint=f"add a {REGISTER_FIELD!r} list to the block, or drop the registration call",
+            f"the declared field {_REGISTER_FIELD!r} is absent: a document registers its plugins as "
+            f"'{_REGISTER_FIELD}: [{{name: ..., target: ...}}]'",
+            details={"field": _REGISTER_FIELD, "known": sorted(spec)},
+            hint=f"add a {_REGISTER_FIELD!r} list to the block, or drop the registration call",
         )
     if isinstance(rows, (str, bytes)) or not isinstance(rows, Sequence):
         raise ValueErrorFault(
-            f"{REGISTER_FIELD} must be a list of {{name, target}} rows, got {type(rows).__name__}",
-            details={"field": REGISTER_FIELD},
+            f"{_REGISTER_FIELD} must be a list of {{name, target}} rows, got {type(rows).__name__}",
+            details={"field": _REGISTER_FIELD},
         )
     for index, row in enumerate(rows):
         register(registry, _row(row, index=index))
@@ -341,12 +341,12 @@ def _row(row: Any, *, index: int) -> Registration:
             return Registration(name=str(row["name"]), target=str(row["target"]))
         except ValueError as exc:
             raise ValueErrorFault(
-                f"{REGISTER_FIELD}[{index}] is malformed: {exc}",
-                details={"field": REGISTER_FIELD, "index": index},
+                f"{_REGISTER_FIELD}[{index}] is malformed: {exc}",
+                details={"field": _REGISTER_FIELD, "index": index},
             ) from exc
     raise ValueErrorFault(
-        f"{REGISTER_FIELD}[{index}] is not a plugin row: expected {{name: ..., target: ...}}, got {row!r}",
-        details={"field": REGISTER_FIELD, "index": index},
+        f"{_REGISTER_FIELD}[{index}] is not a plugin row: expected {{name: ..., target: ...}}, got {row!r}",
+        details={"field": _REGISTER_FIELD, "index": index},
         hint="write each row as 'name: <the name to select>; target: <module>:<attribute>'",
     )
 

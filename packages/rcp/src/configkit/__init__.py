@@ -11,6 +11,7 @@ implementation plan.
 card and never reordered. ``rcp`` imports ``from configkit.<module>``; it re-exports none of these names.
 """
 
+from configkit.audit import audit, pure, scan
 from configkit.commands import (
     Command,
     CommandTree,
@@ -110,8 +111,24 @@ from configkit.schemas import (
 )
 from configkit.spec import Brand, FrozenSpec, OperationOptions, OptionSchema, frozen_mapping, frozen_sequence
 from configkit.storage import RunLayout, lock, publish, read_uri, write_uri
+from configkit.vocab import (
+    BudgetKey,
+    Capability,
+    DatasetRef,
+    DigestPin,
+    GainsKey,
+    KeyVocabulary,
+    MetricKey,
+    TaskKind,
+    WorldSize,
+    cut_for,
+)
 
 __all__ = [
+    # audit.py
+    "audit",
+    "scan",
+    "pure",
     # commands.py
     "Command",
     "Verb",
@@ -220,4 +237,15 @@ __all__ = [
     "read_uri",
     "write_uri",
     "RunLayout",
+    # vocab.py
+    "Capability",
+    "TaskKind",
+    "MetricKey",
+    "WorldSize",
+    "DigestPin",
+    "DatasetRef",
+    "KeyVocabulary",
+    "BudgetKey",
+    "GainsKey",
+    "cut_for",
 ]
