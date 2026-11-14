@@ -155,7 +155,7 @@ packages/configkit/                     <- one distribution, its own manifest
     src/configkit/                      <- import name `configkit`
         __init__.py  roles.py  document.py  overrides.py  identity.py  schemas.py
         faults.py  commands.py  ports.py  plugins.py  storage.py  vocab.py
-        spec.py  optional.py  log.py  audit.py
+        spec.py  audit.py
     tests/                              one test module per library module
 ```
 
@@ -202,8 +202,6 @@ importing `rcp` elsewhere. It is a second change with its own risk, and it buys 
 | `storage.py` | rcp 36, 37, 38; emb-train 24; emb-eval M6 | assume the caller's storage |
 | `vocab.py` | rcp 18, 25, 47; emb-train 4, 5, 6, 7, 8, 9 | ship a benchmark name or a data pin |
 | `spec.py` | rcp 6, 15, 50; emb-train 30; emb-eval M13 | import a service to define a type |
-| `optional.py` | emb-train 28; rcp 10 | bake a distribution name into the hint |
-| `log.py` | rcp 35; emb-train 31 | install a handler at import, or print |
 | `audit.py` | R4; rcp 8, 20, 44, 48; emb-eval S18, S25, X2 | run at import, or at a run. A test calls it. It reads models and source, never the network. |
 | `__init__.py` | — | import anything but the fifteen above |
 
@@ -474,6 +472,7 @@ def classify(exc: BaseException, *, mapper: Callable[[BaseException], Fault]) ->
 def register_fault_codes(rows: Iterable[tuple[type[BaseException], str]]) -> None   # explicit bootstrap call
 def exit_codes(rows: Mapping[str, int]) -> ExitCodeTable                            # consumer-supplied
 def warn(record: BaseModel, code: str, **fields: Any) -> None
+def require(module: str, *, hint: str, extra: str | None = None) -> ModuleType        # the install line is the caller's
 ```
 
 **Two tables, not one.** Round 1 declared `CODES: tuple[tuple[type[Fault], int], ...]`, which maps a class to an
@@ -498,9 +497,10 @@ output time (R5), so a library raise carries a class, a code and a message, and 
 **Per-call-site ownership** (emb-train 12): the code is a parameter of the raise, so a catch block never decides a
 code. `emb_train_cli/checks.py:170-195` shows the defect: the class decides.
 
-**The install line is a parameter.** `optional.require("yaml", hint="pip install <extra>")` takes the hint from the
+**The install line is a parameter.** `faults.require("yaml", hint="pip install <extra>")` takes the hint from the
 caller, defaulted by the consumer. Round 1's `document.py` baked `pip install cohere-rcp[yaml]`, which is the wrong
-distribution after the move (review 2, F6).
+distribution after the move (review 2, F6). `emb_train_models/hf.py:17,25,30-31` and `precision.py:33` are two
+hand-written versions of it; `document.py` uses it for `yaml`, and the consumer supplies the line.
 
 ### `commands.py` — one spec, two front ends, the result included
 
@@ -599,6 +599,10 @@ class Tensor(Protocol): ...      # typing-only; imports nothing (emb-train 29)
 class Ports:
     clock: Clock; budget: Budget; sink: Sink; exit_codes: ExitCodeTable
     renderer: Renderer; atomic: AtomicWriter; uri: UriIO
+
+def logger(name: str) -> logging.Logger                                              # the one log facade
+def configure(sink: Sink, *, level: str, dedup_key: Callable[[Any], str] | None = None) -> None
+def once(key: str) -> bool
 ```
 
 rcp requirement 3 asks for **one ports module that names every host service the framework needs**. Five rcp names
@@ -609,6 +613,12 @@ are imported by four modules with no file naming the set (`cli/command.py:35`, `
 and then omitted the two services its own storage module calls.
 
 **No graph.** The library names the seam and builds nothing (emb-train 22). A consumer injects the assembly.
+
+**A log facade, and no `print`** (rcp 35; emb-train 31). Round 1 mis-stated rcp 35 as a hint rule; it is about a
+logger. `logger(name)`, `configure(sink, *, level, dedup_key)` and `once(key)` live here: one configurable sink, no
+handler installed at import, and once-per-key dedup as a parameter. `support/logging.py` is the model; it installs
+no handler at import except the run-log exception, and that exception moves to `storage`. `annotation/annotate.py:51`
+calls `print` today.
 
 ### `plugins.py` — one lookup, one registration door that can refuse
 
@@ -736,29 +746,6 @@ the consumer puts the model beside the operation. `calibration/fit.py:578` versu
 
 **`FrozenSpec`, `frozen_mapping` and `frozen_sequence` are public** (emb-train 30), and the typed contract has a
 consumer (emb-eval M13): `emb_eval_contracts/recipes.py` validates `MrlSpec.range` and no consumer calls it.
-
-### `optional.py` — one lazy optional-dependency helper
-
-```python
-def require(module: str, *, hint: str, extra: str | None = None) -> ModuleType
-```
-
-**The install hint is a parameter** (emb-train 28). `emb_train_models/hf.py:17,25,30-31` and
-`precision.py:33` are two hand-written versions. `document.py` uses it for `yaml`, and the consumer supplies the line.
-
-### `log.py` — one facade, no print
-
-```python
-def logger(name: str) -> logging.Logger
-def configure(sink: Sink, *, level: str, dedup_key: Callable[[Any], str] | None = None) -> None
-def once(key: str) -> bool
-```
-
-**rcp requirement 35 is about a logger**, and round 1 mis-stated it as a hint rule. The library owns a facade: one
-configurable sink, no handler installed at import, and once-per-key dedup as a parameter. `support/logging.py` is the
-model; it installs no handler at import except the run-log exception, and that exception moves to `storage`.
-
-**No `print`** (emb-train 31). `annotation/annotate.py:51` calls `print` today.
 
 ### `audit.py` — the checks that fail a test
 
@@ -979,7 +966,8 @@ the API blocks above.
 ## What is deliberately not in it
 
 **Not a dependency-injection container.** The library names the seam (`ports.py`) and builds no graph.
-**Not a logging framework.** The library owns a facade (`log.py`): one sink, one dedup key, no handler at import.
+**Not a logging framework.** The library owns a facade (`ports.logger`, `ports.configure`): one sink, one dedup key,
+no handler at import.
 This corrects round 1, which excluded logging and mis-stated rcp requirement 35.
 **Not a retry, cache or concurrency layer.** Every repository already has one and they differ on purpose.
 **Not a schema for any repository's document.** The library owns the *reading*, not the *fields*.
@@ -1035,7 +1023,7 @@ except configkit.faults.Fault as exc:
 # expected: refused: optional.missing
 ```
 
-That is the `optional.require("yaml", ...)` fault, with the consumer's install hint. `tests/test_optional.py` runs
+That is the `faults.require("yaml", ...)` fault, with the consumer's install hint. `tests/test_faults.py` runs
 the same call with `sys.modules['yaml'] = None`, so the optional extra is a tested path and not a claim.
 
 ### P2 — C2: no `rcp` import, proved at run time
@@ -1259,15 +1247,13 @@ the one place that must not repeat it, so every argument is explicit and none ha
 | `tests/test_overrides.py` | the value ladder: `[a, b]` → `list`, `{k: v}` → `dict`, `key=` → `""`, `yes` → `True`, `5` → `int`; the precedence table; the error table; `merge_layers` refusal |
 | `tests/test_identity.py` | the digest against a recorded fixture from `rcp_core._hashing` and `emb_eval_contracts.identity`; `short` bounds; `freeze` depth; the run-id grammar |
 | `tests/test_schemas.py` | `accepted_schema_ids`; the removable spelling; `home_of` |
-| `tests/test_faults.py` | registration order; a consumer row without importing its class; a warning code outside the set; `classify` with a mapper argument |
+| `tests/test_faults.py` | registration order; a consumer row without importing its class; a warning code outside the set; `classify` with a mapper argument; the install line is the caller's string |
 | `tests/test_commands.py` | one spec → flags, envelope, MCP tool; the result model; `--json` declared once; the usage-error path; `customise` |
-| `tests/test_ports.py` | one protocol per call; no torch import |
+| `tests/test_ports.py` | one protocol per call; no torch import; no handler at import, one sink, dedup once per key; no `print` in the package |
 | `tests/test_plugins.py` | a refusal at declaration; the duplicate-name policy; a hook after resolution |
 | `tests/test_storage.py` | atomic write through an injected writer; the lock; the layout; a `file://` URI |
 | `tests/test_vocab.py` | each vocabulary constant; `WorldSize`; `DigestPin`; `BudgetKey`; `MetricKey` canonicalisation; an open `TaskKind` that a consumer extends |
 | `tests/test_spec.py` | `FrozenSpec`; `OperationOptions`; a record type defined outside a service |
-| `tests/test_optional.py` | the hint is the caller's string |
-| `tests/test_log.py` | no handler at import; one sink; dedup once per key; no `print` in the package |
 | `tests/test_audit.py` | every `audit` refusal; the graph walk from a root; every `scan` refusal, with one failing control per check; `pure` on one clean validator and one that opens a file |
 | `tests/test_isolation.py` | P1, P2, P3 and P4 as tests, each with its own negative control built in `tmp_path` |
 | `tests/test_seams.py`, `tests/test_render.py` | the library-internal half of C5 and C6 only; the consumer half is P5 and P6 |
@@ -1345,8 +1331,8 @@ One line per finding. `FIXED` names what changed in this document. `DISPUTED` na
   ships argparse, rcp ships a click adapter; open question 3 prices it.
 - F12 (blocker, `CODES` cannot express the requirement) — FIXED. `FAULT_CODES` (class → string, consumer-registered)
   and `EXIT_CODES` (code → int, consumer-supplied), plus `WARNING_CODES`.
-- F13 (major, the logging exclusion mis-states rcp 35) — FIXED. `log.py` owns a facade; §What is deliberately not in
-  it says so.
+- F13 (major, the logging exclusion mis-states rcp 35) — FIXED. `ports.py` owns the facade (`logger`,
+  `configure`); §What is deliberately not in it says so.
 - F14 (major, two citations not in the sources) — FIXED. The 1,402/2.9 s figure is withdrawn and replaced by a
   measurement I ran (236 modules; 1,231 modules in 2.62 s); `_PATH_FIELDS` is attributed to
   `emb_train_cli/config.py:36-40` and `emb_train_core/schema.py:137`.
@@ -1373,7 +1359,7 @@ One line per finding. `FIXED` names what changed in this document. `DISPUTED` na
 - F5 (major, the value parser breaks the documented `--set` grammar) — FIXED. `parse_value` follows the YAML ladder
   `cli/run.py:188-190` publishes, restricted so `yes` stays a string, and `VALUE_ERRORS` is the published table.
 - F6 (major, `faults.py` cannot replace both sides, install line has no parameter) — FIXED. Open question 2 is
-  restated; `config_error` has a home in `document.py`; the install line is a parameter of `optional.require`.
+  restated; `config_error` has a home in `document.py`; the install line is a parameter of `faults.require`.
 - F7 (major, the spec is missing the result half and the parameters) — FIXED. `Command` carries `result`;
   `build_parser` takes `prog`, `brand`, `envelope_schema_id`, `exit_codes`; `--json` and `--traceback` are declared
   once, in `build_parser`.
