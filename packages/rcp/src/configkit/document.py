@@ -602,27 +602,28 @@ def _walk(schema: Mapping[str, Any], loc: Sequence[str]) -> tuple[list[str], dic
     """
     definitions = schema.get("$defs", {})
 
-    def resolve(node: dict[str, Any]) -> dict[str, Any]:
+    def deref(node: dict[str, Any]) -> dict[str, Any]:
+        """Follow a ``$ref`` into the schema's definitions; a name the definitions do not hold is no schema."""
         while "$ref" in node:
             node = definitions.get(node["$ref"].rsplit("/", 1)[-1], {})
         return node
 
-    node: dict[str, Any] | None = resolve(dict(schema)) if schema else None
+    node: dict[str, Any] | None = deref(dict(schema)) if schema else None
     path: list[str] = []
     for part in loc:
         if node is not None:
-            node = resolve(node)
-            members = [resolve(member) for member in node.get("anyOf", []) + node.get("oneOf", [])]
+            node = deref(node)
+            members = [deref(member) for member in node.get("anyOf", []) + node.get("oneOf", [])]
             members = [member for member in members if member.get("type") != "null"]
             if len(members) == 1:  # an optional value is no union: pydantic names no member
                 node = members[0]
-                members = [resolve(member) for member in node.get("anyOf", []) + node.get("oneOf", [])]
+                members = [deref(member) for member in node.get("anyOf", []) + node.get("oneOf", [])]
             if len(members) > 1 and not _has_key(node, part) and not any(_has_key(member, part) for member in members):
-                node = _member(node, members, part, resolve)
+                node = _member(node, members, part, deref)
                 continue
         path.append(part)
-        node = _step(node, part, resolve) if node is not None else None
-    return path, resolve(node) if node is not None else None
+        node = _step(node, part, deref) if node is not None else None
+    return path, deref(node) if node is not None else None
 
 
 def _has_key(node: Mapping[str, Any], part: str) -> bool:
@@ -646,13 +647,13 @@ def _member(
     node: Mapping[str, Any],
     members: list[dict[str, Any]],
     tag: str,
-    resolve: Callable[[dict[str, Any]], dict[str, Any]],
+    deref: Callable[[dict[str, Any]], dict[str, Any]],
 ) -> dict[str, Any] | None:
     """The member of a union a location's *tag* names (``None`` when no member is recognised)."""
     for union in (node, *members):  # a discriminated union, or one nested in an optional one
         mapping = union.get("discriminator", {}).get("mapping", {})
         if tag in mapping:
-            return resolve({"$ref": mapping[tag]})
+            return deref({"$ref": mapping[tag]})
     for member in members:
         name = member.get("properties", {}).get("name", {})
         if name.get("const") == tag or tag in name.get("enum", ()):
@@ -677,11 +678,9 @@ def _known_keys(schema: Mapping[str, Any], loc: Sequence[str]) -> list[str]:
     return sorted(keys)
 
 
-def _step(
-    node: dict[str, Any], part: str, resolve: Callable[[dict[str, Any]], dict[str, Any]]
-) -> dict[str, Any] | None:
+def _step(node: dict[str, Any], part: str, deref: Callable[[dict[str, Any]], dict[str, Any]]) -> dict[str, Any] | None:
     """The sub-schema of *node* at *part*: a property, a list's items, or a mapping's value schema."""
-    node = resolve(node)
+    node = deref(node)
     if part in node.get("properties", {}):
         return node["properties"][part]
     if part.isdigit() and "items" in node:
@@ -689,7 +688,7 @@ def _step(
     if isinstance(node.get("additionalProperties"), dict):
         return node["additionalProperties"]
     for member in node.get("anyOf", []) + node.get("oneOf", []):
-        found = _step(member, part, resolve)
+        found = _step(member, part, deref)
         if found is not None:
             return found
     return None
