@@ -33,14 +33,25 @@ CONTENT; endpoint, concurrency, timeouts, retries and capability gates are
 RUNTIME); a run's step identities are built from the judge's payload and the
 :class:`~rcp.runs.RunConfig` sections they depend on.
 :func:`check_declarations` turns a missing declaration into a failing test.
+
+The vocabulary and the three walks are :mod:`configkit.roles`': ``FieldRole`` is
+``configkit.roles.Role`` (the seven roles, one per field), and
+:func:`declared_roles`, :func:`check_declarations` and :func:`identity_payload`
+delegate to ``roles_of``, ``roles_of`` and ``identity_of``. The library's refusal
+is reported as :class:`IdentityDeclarationError`, the type this package's callers
+catch. The recorded (redacted) form and the local-input listing are *not* role
+derived here: a CONTENT field can be a URI that is hashed **and** redacted, and a
+field carries one role, so those two walks keep their own domain rules
+(``runs/config.py``; deferred to T4-FOLLOW-UP (RECORD_ROLES)).
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
-from enum import StrEnum
 from typing import Any
 
+from configkit import roles as role_library
+from configkit.faults import Fault
 from pydantic import BaseModel
 from rcp_core._hashing import (
     UnhashableValueError,
@@ -52,12 +63,11 @@ from rcp_core._hashing import (
     short,
 )
 
-
-class FieldRole(StrEnum):
-    """What a config field may do to an identity."""
-
-    CONTENT = "content"
-    RUNTIME = "runtime"
+#: What a config field may do to an identity. The vocabulary is the library's (:class:`configkit.roles.Role`,
+#: seven members: ``CONTENT``, ``RUNTIME``, ``PATH``, ``URI``, ``SECRET``, ``ENV``, ``OUTPUT``), because
+#: "identity" and "redaction" are only meaningful if every consumer declares the same roles by the same names.
+#: ``FieldRole`` is the name this package's declarations and its 50 importers spell; it is the same class.
+FieldRole = role_library.Role
 
 
 class IdentityDeclarationError(TypeError):
@@ -65,21 +75,24 @@ class IdentityDeclarationError(TypeError):
 
 
 def declared_roles(model_cls: type[BaseModel]) -> dict[str, FieldRole]:
-    """Roles declared for ``model_cls``, merged down its MRO.
+    """Roles declared for ``model_cls``, merged down its MRO (the library's walk: ``roles.roles_of``).
 
-    A subclass may add fields and may re-declare an
-    inherited one; the most derived declaration wins.
+    A subclass may add fields and may re-declare an inherited one; the most derived declaration wins, and a
+    value written as a plain string is coerced to a :class:`FieldRole` (``data/templates`` declares strings).
+
+    Raises:
+        IdentityDeclarationError: a declaration is not a mapping or names an unknown role, or the model declares
+            no roles at all.
     """
-    merged: dict[str, FieldRole] = {}
-    for klass in reversed(model_cls.__mro__):
-        roles = klass.__dict__.get("IDENTITY_ROLES")
-        if roles is None:
-            continue
-        if not isinstance(roles, Mapping):
-            raise IdentityDeclarationError(f"{klass.__name__}.IDENTITY_ROLES must be a mapping of field -> FieldRole")
-        for name, role in roles.items():
-            merged[name] = FieldRole(role)
-    return merged
+    return dict(_roles_of(model_cls))
+
+
+def _roles_of(model_cls: type[BaseModel]) -> Mapping[str, FieldRole]:
+    """``roles.roles_of``, with the library's refusal reported as this module's error type."""
+    try:
+        return role_library.roles_of(model_cls)
+    except Fault as fault:
+        raise IdentityDeclarationError(fault.message) from fault
 
 
 def check_declarations(model_cls: type[BaseModel]) -> None:
@@ -92,39 +105,11 @@ def check_declarations(model_cls: type[BaseModel]) -> None:
     * a **stale** declaration -- the field it names is gone, so the mapping is
       a record of a model that no longer exists.
     """
-    roles = declared_roles(model_cls)
-    if not roles:
-        raise IdentityDeclarationError(
-            f"{model_cls.__name__} feeds an identity but declares no IDENTITY_ROLES; "
-            "classify each field CONTENT / RUNTIME."
-        )
-    fields = set(model_cls.model_fields)
-    undeclared = sorted(fields - set(roles))
-    stale = sorted(set(roles) - fields)
-    problems: list[str] = []
-    if undeclared:
-        problems.append(
-            f"undeclared field(s) {undeclared}: add each to {model_cls.__name__}.IDENTITY_ROLES as "
-            "CONTENT (changes what is computed) or RUNTIME (changes only how fast/where)"
-        )
-    if stale:
-        problems.append(f"declared but absent field(s) {stale}: delete them from IDENTITY_ROLES")
-    if problems:
-        raise IdentityDeclarationError(f"{model_cls.__name__}: " + "; ".join(problems))
-
-
-def _content_value(value: Any) -> Any:
-    if isinstance(value, BaseModel):
-        return identity_payload(value)
-    if isinstance(value, Mapping):
-        return {key: _content_value(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_content_value(item) for item in value]
-    return value
+    _roles_of(model_cls)
 
 
 def identity_payload(model: BaseModel) -> dict[str, Any]:
-    """The CONTENT-only payload of ``model``, ready for the canonical serialiser.
+    """The CONTENT-only payload of ``model``, ready for the canonical serialiser (``roles.identity_of``).
 
     Nested models are recursed through the same rule, so a runtime knob inside a
     nested model cannot reach a key by being nested.
@@ -135,21 +120,14 @@ def identity_payload(model: BaseModel) -> dict[str, Any]:
 
     Keys an ``extra="allow"`` model received are CONTENT: a needless re-key costs
     compute, a missed one costs numbers.
+
+    Raises:
+        IdentityDeclarationError: a model in the graph has an incomplete ``IDENTITY_ROLES`` declaration.
     """
-    check_declarations(type(model))
-    roles = declared_roles(type(model))
-    payload: dict[str, Any] = {}
-    for name in type(model).model_fields:
-        if roles[name] is not FieldRole.CONTENT:
-            continue
-        value = getattr(model, name, None)
-        if value is None:
-            continue
-        payload[name] = _content_value(value)
-    for name, value in (model.__pydantic_extra__ or {}).items():
-        if value is not None:
-            payload[name] = _content_value(value)
-    return payload
+    try:
+        return dict(role_library.identity_of(model))
+    except Fault as fault:
+        raise IdentityDeclarationError(fault.message) from fault
 
 
 def identity_differences(recorded: Any, current: Any, *, path: str = "") -> list[str]:

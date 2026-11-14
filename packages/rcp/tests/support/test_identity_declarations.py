@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import Any, ClassVar, get_args, get_origin
 
 import pytest
+from configkit import roles as library_roles
 from pydantic import BaseModel, ConfigDict, Field
 
 from rcp.judging import JudgeConfig
@@ -47,7 +48,11 @@ def identity_models(*roots: type[BaseModel]) -> list[type[BaseModel]]:
         if model_cls in seen:
             continue
         seen[model_cls] = None
-        roles = declared_roles(model_cls)
+        try:
+            roles = declared_roles(model_cls)
+        except IdentityDeclarationError:
+            # A broken declaration is the defect the guard reports: list the model, walk nothing under it.
+            continue
         for name, field in model_cls.model_fields.items():
             if roles.get(name) is not FieldRole.RUNTIME:
                 queue.extend(nested for nested in _annotation_models(field.annotation) if nested not in seen)
@@ -125,12 +130,12 @@ class TestAnUndeclaredFieldFails:
         offenders = [cls for cls in identity_models(Judge) if _is_undeclared(cls)]
         assert nested in offenders
 
-    def test_the_message_names_the_field_and_the_choices(self) -> None:
+    def test_the_message_names_the_field_and_where_to_declare_it(self) -> None:
         with pytest.raises(IdentityDeclarationError) as error:
             check_declarations(self._subclass_with_new_field(JudgeConfig))
         message = str(error.value)
         assert "new_knob" in message
-        assert "CONTENT" in message and "RUNTIME" in message
+        assert "IDENTITY_ROLES" in message
 
     def test_a_model_with_no_declarations_at_all_is_refused(self) -> None:
         class Undeclared(BaseModel):
@@ -157,6 +162,62 @@ class TestAStaleDeclarationFails:
 
         with pytest.raises(IdentityDeclarationError, match="declared but absent"):
             check_declarations(Ghost)
+
+
+class TestTheRoleVocabularyIsTheLibrarys:
+    """R2: ``FieldRole`` is ``configkit.roles.Role``, and the three walks are the library's.
+
+    The declaration mechanism does not move (``IDENTITY_ROLES`` on the model, merged down the MRO, a string value
+    coerced); the *vocabulary* does: one class with the library's seven members, so "identity" and "redaction"
+    mean the same thing in the library and in every declaration this package writes.
+    """
+
+    def test_the_role_class_is_the_librarys(self) -> None:
+        assert FieldRole is library_roles.Role
+        assert {member.value for member in FieldRole} == {
+            "content",
+            "runtime",
+            "path",
+            "uri",
+            "secret",
+            "env",
+            "output",
+        }
+
+    def test_a_declaration_may_name_any_of_the_seven_roles(self) -> None:
+        # A role the product's own declarations do not use yet is carried through, and only CONTENT reaches the
+        # payload: the wider vocabulary does not change what a key hashes.
+        class Store(BaseModel):
+            IDENTITY_ROLES: ClassVar[dict[str, FieldRole]] = {"kept": FieldRole.CONTENT, "where": FieldRole.PATH}
+
+            kept: int = 1
+            where: str = "data/x.jsonl"
+
+        assert declared_roles(Store)["where"] is library_roles.Role.PATH
+        assert identity_payload(Store()) == {"kept": 1}
+
+    def test_a_broken_declaration_is_this_modules_error_not_a_library_fault(self) -> None:
+        # The library reports a bad declaration as its own ``Fault``; a caller of this module catches
+        # ``IdentityDeclarationError``, so the fault is translated and its cause kept.
+        class Broken(BaseModel):
+            IDENTITY_ROLES: ClassVar[dict[str, Any]] = {"knob": "nonsense"}
+
+            knob: int = 1
+
+        with pytest.raises(IdentityDeclarationError, match="not a Role") as error:
+            check_declarations(Broken)
+        assert error.value.__cause__ is not None
+
+    @pytest.mark.parametrize("model_cls", identity_models(*IDENTITY_ROOTS), ids=lambda cls: cls.__name__)
+    def test_the_payload_is_the_librarys_walk(self, model_cls: type[BaseModel]) -> None:
+        """Every model this package walks keys exactly as ``configkit.roles.identity_of`` does.
+
+        ``model_construct()`` builds the instance without running validators: the payloads are compared for the
+        same values, which is the claim (a changed payload is a changed key).
+        """
+        instance = model_cls.model_construct()
+
+        assert identity_payload(instance) == dict(library_roles.identity_of(instance))
 
 
 class TestThePayloadFollowsTheDeclarations:
