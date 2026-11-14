@@ -41,6 +41,7 @@ from configkit.document import (
     register_field_type,
     resolve,
     resolve_reference,
+    same_value,
     validate,
     validate_or_fault,
 )
@@ -174,6 +175,7 @@ __all__ = [
     "register_field_type",
     "leaf_paths",
     "resolve_reference",
+    "same_value",
     "validate_or_fault",
     # faults.py
     "ConfigWarning",

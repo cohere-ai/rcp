@@ -88,6 +88,12 @@ is unchanged.
 
 ### Internal
 
+`configkit.document.same_value` is the library's one value rule, published from `document` and the
+`configkit` facade: two values are the same when their canonical bytes are, so `True` and `1` are not.
+`configkit.overrides.parse` compares two `--set` values of one path with it, where `!=` treated
+`seed=true` and `seed=1` as one value and silently kept the first; `deep_merge` already compared
+canonically, so the two doors now refuse and report the same pair.
+
 The wheel gains an internal package, `configkit`, at `packages/rcp/src/configkit/`: the shared configuration
 and command-line library the product, `emb-train` and `emb-eval` are to consume. It is not a public surface --
 it is not in `rcp.support.api_docs.PUBLIC_MODULES`, so no name is added to `tests/contract/snapshots/` -- and

@@ -154,6 +154,17 @@ def test_parse_refuses_a_pair_that_is_not_key_value_and_a_repeated_path_with_two
     assert parse(["judge.concurrency=8", "judge.concurrency=8"]) == parse(["judge.concurrency=8"])
 
 
+def test_a_repeated_path_compares_values_canonically_not_with_equality() -> None:
+    """FC-D 1 / QC-3 H6: ``parse`` compared with ``!=``, and ``True == 1``, so ``seed=true`` followed by
+    ``seed=1`` was one record and the first value silently won, while ``deep_merge`` compares canonically and
+    reports the same pair as a difference. One value rule, both doors."""
+    with pytest.raises(Fault) as caught:
+        parse(["seed=true", "seed=1"])
+    assert caught.value.details["refusal"] == "repeated_path"
+
+    assert parse(["seed=true", "seed=true"]) == parse(["seed=true"])
+
+
 def test_parse_value_imports_yaml_lazily_and_refuses_a_value_it_cannot_place(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

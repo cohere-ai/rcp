@@ -36,6 +36,7 @@ from configkit.document import (
     leaf_paths,
     read,
     resolve,
+    same_value,
     validate_or_fault,
 )
 from configkit.faults import Fault, require
@@ -215,7 +216,7 @@ def parse(pairs: Sequence[str]) -> tuple[Override, ...]:
         if previous is None:
             seen[path] = override
             overrides.append(override)
-        elif previous.value != override.value:
+        elif not same_value(previous.value, override.value):
             raise _refusal("repeated_path", path=path, first=previous.value, second=override.value)
     return tuple(overrides)
 

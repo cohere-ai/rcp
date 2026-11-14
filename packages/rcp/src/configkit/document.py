@@ -56,6 +56,7 @@ __all__ = [
     "register_field_type",
     "resolve",
     "resolve_reference",
+    "same_value",
     "validate",
     "validate_or_fault",
 ]
@@ -86,13 +87,16 @@ def _copy(value: Any) -> Any:
     return copy.deepcopy(value)
 
 
-def _same(left: Any, right: Any) -> bool:
+def same_value(left: Any, right: Any) -> bool:
     """Whether two layer values are one value: the canonical form, so ``True`` and ``1`` are not the same.
 
     ``==`` says ``True == 1``, so a layer's ``seed: true`` over a base's ``seed: 1`` was "equal" and the base won
     with no record. The compare is the canonical bytes every identity in the library is taken over, so two values
     are equal only when they hash equal. A value with no canonical form (a set, a naive datetime) cannot enter an
     identity; a merge still decides, and it compares the type and then the value, never ``==`` alone.
+
+    The one value rule: :func:`configkit.overrides.parse` compares two ``--set`` values of one path with it too,
+    so a repeated path is refused for the same reason a layer difference is reported.
     """
     try:
         return canonical_bytes(left) == canonical_bytes(right)
@@ -144,7 +148,7 @@ def _merge_into(
         if isinstance(value, Mapping) and isinstance(inherited, dict):
             _merge_into(inherited, value, path=here, on_diff=on_diff)
             continue
-        if key in merged and on_diff is not None and not _same(inherited, value):
+        if key in merged and on_diff is not None and not same_value(inherited, value):
             on_diff(here, inherited, value)
         merged[key] = _copy(value)
 
