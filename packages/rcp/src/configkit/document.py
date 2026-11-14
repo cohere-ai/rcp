@@ -6,7 +6,7 @@ keeps them:
 1. the document is UTF-8 text, and a file that is not is refused naming the file;
 2. a duplicate key is refused: a duplicate can hide a value, and a hidden value breaks reproducibility;
 3. a required ``schema`` key must equal the id the caller passes (:func:`read`'s ``schema_id`` parameter), and
-   the model never defaults it;
+   the key is popped into :attr:`Document.schema` so no model ever receives it;
 4. a relative ``PATH`` value resolves against the document's own directory, and an absolute one is kept;
 5. the resolution happens before anything hashes the payload, so a moved local file changes the identity.
 
@@ -54,6 +54,10 @@ __all__ = [
     "resolve_reference",
     "validate",
 ]
+
+#: The key a document uses to name the schema it was written as. It is popped before validation, so no model
+#: declares it: the model's own id field is ``schema_id``, and the loader never passes one to the other.
+_SCHEMA: Final[str] = "schema"
 
 #: The key a document uses to name the file it extends. It is popped before validation, so no model declares it.
 _EXTENDS: Final[str] = "extends"
@@ -109,13 +113,16 @@ class Document:
         path: The file as the caller named it.
         base: The directory a relative ``PATH`` value resolves against: the document's own directory, never the
             process's working directory.
-        payload: The mapping: every ``extends`` chain merged under the child, the ``extends`` key popped, and no
-            value validated. A reader must not mutate it; :func:`resolve` copies what it changes.
+        payload: The mapping: every ``extends`` chain merged under the child, the ``extends`` and ``schema`` keys
+            popped, and no value validated. A reader must not mutate it; :func:`resolve` copies what it changes.
+        schema: The schema id the document declared in its ``schema`` key, or ``None`` when it declared none. The
+            key is not in :attr:`payload`: a model declares ``schema_id`` and never receives the document's tag.
     """
 
     path: Path
     base: Path
     payload: Mapping[str, Any]
+    schema: str | None = None
 
 
 def _check_keys(node: Any, path: Path, *, seen: set[int]) -> None:
@@ -234,7 +241,8 @@ def read(
         yaml_hint: The install line a missing YAML reader reports, verbatim.
 
     Returns:
-        The document, with no value validated.
+        The document, with no value validated and the ``schema`` key recorded on :attr:`Document.schema` rather
+        than left in the payload: ``resolve`` would otherwise refuse it as a key the model does not declare.
 
     Raises:
         Fault: the file is not UTF-8 (``value_error``); a key appears twice (``value_error``); a base it extends
@@ -244,15 +252,15 @@ def read(
     """
     resolved = Path(path).resolve()
     payload = _merged(resolved, (), extends=extends, yaml_hint=yaml_hint)
-    if schema_id is not None and payload.get("schema") != schema_id:
+    declared = payload.pop(_SCHEMA, None)
+    if schema_id is not None and declared != schema_id:
         raise _refusal(
-            f"config {path} declares schema {payload.get('schema')!r}, not {schema_id!r}; "
-            f"every document must declare {schema_id!r}",
+            f"config {path} declares schema {declared!r}, not {schema_id!r}; every document must declare {schema_id!r}",
             path=str(path),
-            schema=payload.get("schema"),
+            schema=declared,
             expected=schema_id,
         )
-    return Document(path=Path(path), base=resolved.parent, payload=payload)
+    return Document(path=Path(path), base=resolved.parent, payload=payload, schema=declared)
 
 
 def _path_rows(model: type[BaseModel], extra: Sequence[Sequence[str]]) -> tuple[tuple[str, ...], ...]:

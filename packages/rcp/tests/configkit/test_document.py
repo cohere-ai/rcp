@@ -146,6 +146,27 @@ def test_schema_id_is_a_parameter_and_is_checked_only_when_given(tmp_path: Path)
     assert "p.other.v1" in caught.value.message and "p.doc.v1" in caught.value.message
 
 
+def test_a_conforming_document_round_trips_through_load_with_its_schema_id(tmp_path: Path) -> None:
+    """B3: the id is the document's own key, so ``load(schema_id=...)`` accepts the document ``read`` accepts.
+
+    ``read`` used to leave ``schema`` in the payload, and ``resolve`` then refused it as a key the model does not
+    declare (``extra="forbid"``): every conforming document was rejected one stage after it was checked.
+    """
+    path = _write(tmp_path / "doc.yaml", "schema: p.doc.v1\nsource: data\noutput: runs\nname: x\n")
+    document = read(path, schema_id="p.doc.v1")
+    assert document.schema == "p.doc.v1"
+    assert "schema" not in document.payload
+
+    loaded = load(path, _Doc, schema_id="p.doc.v1")
+    assert loaded.name == "x"
+    assert loaded.source == str((tmp_path / "data").resolve())
+
+
+def test_a_document_that_declares_no_schema_records_none(tmp_path: Path) -> None:
+    """A caller that names no id checks none, and the record says the document declared no tag."""
+    assert read(_write(tmp_path / "untagged.yaml", "name: x\n")).schema is None
+
+
 def test_resolves_a_relative_path_against_the_documents_own_directory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -400,7 +421,7 @@ def test_applied_is_a_frozen_record_of_the_model_the_overrides_and_the_payload()
         applied.payload = {}  # type: ignore[misc]
 
 
-def test_document_is_a_frozen_record_of_the_path_the_base_and_the_payload(tmp_path: Path) -> None:
+def test_document_is_a_frozen_record_of_the_path_the_base_the_schema_and_the_payload(tmp_path: Path) -> None:
     """The reader returns a record, not a bare mapping: the base is what the resolver uses."""
     path = _write(tmp_path / "doc.yaml", "name: x\n")
     document = read(path)
@@ -408,3 +429,4 @@ def test_document_is_a_frozen_record_of_the_path_the_base_and_the_payload(tmp_pa
     assert document.path == path
     assert document.base == tmp_path.resolve()
     assert document.payload == {"name": "x"}
+    assert document.schema is None
