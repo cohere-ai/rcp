@@ -293,6 +293,29 @@ def test_precedence_is_file_then_env_then_flag_and_the_winner_is_recorded() -> N
     assert winner.source == "--set"
 
 
+def test_every_override_refusal_carries_the_next_step_and_the_source() -> None:
+    """L16: no override refusal carried a ``hint``, and the writer never saw the override's ``source``.
+
+    A typo in an environment variable and a typo in ``--set`` produced the same message with no next step, and
+    neither said which layer the value came from.
+    """
+    with pytest.raises(Fault) as caught:
+        from_env({"P_JUDGE_CONCURENCY": "2"}, prefix="P", model=_Run)
+    assert caught.value.details["refusal"] == "unknown_env"
+    assert caught.value.hint is not None and caught.value.hint.strip()
+    assert "P_JUDGE_CONCURENCY" in caught.value.message
+
+    with pytest.raises(Fault) as caught:
+        apply(_draft(), parse(["judge.nope=2"]), base=Path("/tmp"))
+    assert caught.value.details["refusal"] == "not_a_leaf"
+    assert caught.value.details["source"] == "--set"
+    assert caught.value.hint is not None and caught.value.hint.strip()
+
+    with pytest.raises(Fault) as caught:
+        apply(_draft(), from_env({"P_JUDGE_NOPE": "2"}, prefix="P", model=_Run), base=Path("/tmp"))
+    assert caught.value.details["refusal"] == "unknown_env"
+
+
 # --- the layered merge ---------------------------------------------------------------------------------------
 
 
@@ -411,8 +434,9 @@ def test_pipeline_refuses_an_override_with_no_base(tmp_path: Path) -> None:
 
 
 def test_value_errors_is_the_published_error_table() -> None:
-    """rcp 12: one table, one code and one template per refusal, and every code is a fault code."""
-    assert {code for code, _ in VALUE_ERRORS.values()} <= {code for _, code, _owner in FAULT_CODES}
+    """rcp 12: one table, one code, one template and one hint per refusal, and every code is a fault code."""
+    assert {code for code, _template, _hint in VALUE_ERRORS.values()} <= {code for _, code, _owner in FAULT_CODES}
+    assert [key for key, (_code, _template, hint) in VALUE_ERRORS.items() if not hint.strip()] == []
     assert set(VALUE_ERRORS) == {
         "not_a_pair",
         "repeated_path",

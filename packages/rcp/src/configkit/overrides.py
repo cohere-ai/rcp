@@ -53,44 +53,77 @@ __all__ = [
     "VALUE_ERRORS",
 ]
 
-#: One entry per refusal: the fault code and the message template the raise formats with its fields. The table
-#: is data, so a consumer's test can read it and ``audit`` can check every code against the fault table. Every
-#: refusal here is a value problem, so every code is the generic one: a consumer's exit-code table needs no row
-#: per message.
-VALUE_ERRORS: Final[Mapping[str, tuple[str, str]]] = MappingProxyType(
+#: One entry per refusal: the fault code, the message template the raise formats with its fields, and the next
+#: step a caller can take. The table is data, so a consumer's test can read it and ``audit`` can check every code
+#: against the fault table. Every refusal here is a value problem, so every code is the generic one: a consumer's
+#: exit-code table needs no row per message. The hint is static: the message names the path, the variable and the
+#: leaves, and the hint names the fix.
+VALUE_ERRORS: Final[Mapping[str, tuple[str, str, str]]] = MappingProxyType(
     {
-        "not_a_pair": ("value_error", "override {text!r} is not KEY=VALUE; the form is key.path=VALUE"),
+        "not_a_pair": (
+            "value_error",
+            "override {text!r} is not KEY=VALUE; the form is key.path=VALUE",
+            "write key.path=VALUE, for example judge.concurrency=4",
+        ),
         "repeated_path": (
             "value_error",
             "the override {path} is given twice with two values ({first!r} and {second!r}); one path has one value",
+            "give one path one value; a different value belongs in a later layer",
         ),
-        "value_not_parsed": ("value_error", "the override value {text!r} is not a YAML literal: {problem}"),
-        "not_a_leaf": ("value_error", "{path} names no leaf of {model}; the leaves are {known}"),
-        "not_a_mapping": ("value_error", "{path} runs through {head}, which is not a model; an override names a leaf"),
-        "no_default": ("value_error", "{path} is required and declares no default; unset cannot remove it"),
+        "value_not_parsed": (
+            "value_error",
+            "the override value {text!r} is not a YAML literal: {problem}",
+            "write a YAML literal: 5, 1.5, true, null, [a, b] or {k: v}",
+        ),
+        "not_a_leaf": (
+            "value_error",
+            "{path} names no leaf of {model}; the leaves are {known}",
+            "name a leaf the model declares; the message lists them",
+        ),
+        "not_a_mapping": (
+            "value_error",
+            "{path} runs through {head}, which is not a model; an override names a leaf",
+            "an override names a leaf; a path may only run through a model",
+        ),
+        "no_default": (
+            "value_error",
+            "{path} is required and declares no default; unset cannot remove it",
+            "give the field a default, or leave it set",
+        ),
         "no_base": (
             "value_error",
             "an override resolves its PATH values against a base the caller names; pipeline got overrides and no base",
+            "pass base= to pipeline: an override's PATH values resolve against the caller's base",
         ),
-        "no_prefix": ("value_error", "an environment prefix is required; an empty prefix would read every variable"),
+        "no_prefix": (
+            "value_error",
+            "an environment prefix is required; an empty prefix would read every variable",
+            "pass the consumer's prefix (Brand.prefix); an empty one would read every variable",
+        ),
         "unknown_env": (
             "value_error",
             "{name} is under the prefix {prefix}_ and names no leaf of {model}; the names are {known}",
+            "rename or unset the variable, or declare the leaf the model reads",
         ),
         "content_conflict": (
             "value_error",
             "{path} is CONTENT and the two layers set it differently ({base!r} and {overlay!r}); "
             "one document has one content value",
+            "make the two layers agree on the CONTENT value, or change the field's Role",
         ),
-        "no_role": ("value_error", "{path} declares no Role, so the layers cannot say whether it may differ"),
+        "no_role": (
+            "value_error",
+            "{path} declares no Role, so the layers cannot say whether it may differ",
+            "declare the field's Role in the model's IDENTITY_ROLES",
+        ),
     }
 )
 
 
 def _refusal(key: str, **fields: Any) -> Fault:
-    """The fault *key* names: its code and its message template come from :data:`VALUE_ERRORS`."""
-    code, template = VALUE_ERRORS[key]
-    return Fault(template.format(**fields), code=code, details={"refusal": key, **fields})
+    """The fault *key* names: its code, message template and hint come from :data:`VALUE_ERRORS`."""
+    code, template, hint = VALUE_ERRORS[key]
+    return Fault(template.format(**fields), code=code, details={"refusal": key, **fields}, hint=hint)
 
 
 def _leaves(model: type[BaseModel], prefix: tuple[str, ...]) -> str:
