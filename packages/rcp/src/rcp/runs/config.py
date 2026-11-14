@@ -94,8 +94,9 @@ class DatasetSource(BaseModel):
     def load(self):
         """The :class:`~rcp.data.Dataset` (read lazily: queries and corpus on first access)."""
         from rcp.data import load_dataset
+        from rcp.data.dataset import ReaderOptions
 
-        return load_dataset(self.uri, subset=self.subset, revision=self.revision, **self.options)
+        return load_dataset(self.uri, subset=self.subset, revision=self.revision, options=ReaderOptions(**self.options))
 
     def identity(self) -> dict[str, Any]:
         """What names the data: the source, the commit it resolves to now, and the bytes nothing pins.

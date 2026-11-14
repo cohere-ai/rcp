@@ -75,6 +75,17 @@ share (`check_judge_overlap`'s shipped default, 1). `rcp_core.irt._calibration` 
 `JudgeOverlapError` -- the refusal that check raises, already re-exported -- in its own `__all__`. Additive: no
 name moves and no number changes.
 
+`rcp.load_dataset` takes its reader options as one declared model instead of a `**options: Any` mapping:
+`load_dataset(uri, *, subset=None, revision=None, split=None, options=None)`, where `options` is a
+`ReaderOptions` (a `configkit.spec.OptionSchema`, importable from `rcp.data.dataset`). A reader's options are its
+own -- `name` for any of them, `duplicates` for a Hub repository, `queries_uri` and `qrels_uri` for `images:` -- so
+the model accepts every key and the reader stays the authority on which exist: an option it does not take is still
+a `ConfigError` naming the ones it does. Callers that passed a reader option as a keyword move to
+`options=ReaderOptions(...)`. Two entries of `tests/contract/snapshots/python_api.json` move, and only these two:
+`rcp.load_dataset` and `rcp.data.load_dataset`, each `options` from `var_keyword: Any` to
+`keyword_only: ReaderOptions | None`. `schemas/`, `cli.json` and `mcp_tools.json` do not move, and the return type
+is unchanged.
+
 ### Internal
 
 The wheel gains an internal package, `configkit`, at `packages/rcp/src/configkit/`: the shared configuration

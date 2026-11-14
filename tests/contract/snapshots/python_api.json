@@ -3274,9 +3274,9 @@
             "name": "split"
           },
           {
-            "annotation": "Any",
-            "default": "<required>",
-            "kind": "var_keyword",
+            "annotation": "ReaderOptions | None",
+            "default": null,
+            "kind": "keyword_only",
             "name": "options"
           },
           {
@@ -7070,9 +7070,9 @@
             "name": "split"
           },
           {
-            "annotation": "Any",
-            "default": "<required>",
-            "kind": "var_keyword",
+            "annotation": "ReaderOptions | None",
+            "default": null,
+            "kind": "keyword_only",
             "name": "options"
           },
           {

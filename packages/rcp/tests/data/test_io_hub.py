@@ -16,6 +16,7 @@ import pandas as pd
 import pytest
 
 from rcp.data import load_dataset
+from rcp.data.dataset import ReaderOptions
 from rcp.data.io.hub import HubReader, hub_subsets
 from rcp.data.revisions import resolve_revision
 from rcp.errors import ConfigError, DataError, RcpNdcgWarning
@@ -348,7 +349,8 @@ def test_document_parts_reads_the_ids_the_same_whichever_parts_are_read(hub) -> 
 
         def corpus(parts):
             return load_dataset(
-                f"hf://vidore/vidore_v3_finance_en_mteb_format/english@{SHA}", document_parts=parts
+                f"hf://vidore/vidore_v3_finance_en_mteb_format/english@{SHA}",
+                options=ReaderOptions(document_parts=parts),
             ).corpus
 
         ids = {parts: [doc.doc_id for doc in corpus(parts).values()] for parts in ("auto", "text", "image", "both")}
@@ -361,7 +363,10 @@ def test_document_parts_image_drops_the_ocr_text(hub) -> None:
     """The visual run: what the judge sees is the page, not a transcription (ViDoRe v3 ships both in one
     row; they are different experiments over the same judgements)."""
     with hub("vidore-vidore-v3-finance-en"):
-        dataset = load_dataset(f"hf://vidore/vidore_v3_finance_en_mteb_format/english@{SHA}", document_parts="image")
+        dataset = load_dataset(
+            f"hf://vidore/vidore_v3_finance_en_mteb_format/english@{SHA}",
+            options=ReaderOptions(document_parts="image"),
+        )
         document = dataset.corpus["corpus-test-10"]
         assert document.as_content.has_media and document.text == ""
 
@@ -369,18 +374,21 @@ def test_document_parts_image_drops_the_ocr_text(hub) -> None:
 def test_document_parts_text_drops_the_pages(hub) -> None:
     """The OCR baseline: comparable to the visual run because the ids and the qrels are identical."""
     with hub("vidore-vidore-v3-finance-en"):
-        dataset = load_dataset(f"hf://vidore/vidore_v3_finance_en_mteb_format/english@{SHA}", document_parts="text")
+        dataset = load_dataset(
+            f"hf://vidore/vidore_v3_finance_en_mteb_format/english@{SHA}",
+            options=ReaderOptions(document_parts="text"),
+        )
         document = dataset.corpus["corpus-test-10"]
         assert not document.as_content.has_media and document.text == "page text"
 
 
 def test_document_parts_refuses_a_corpus_with_either_absent(hub) -> None:
     with hub("mteb-nfcorpus"):
-        dataset = load_dataset(f"hf://mteb/nfcorpus@{SHA}", document_parts="both")
+        dataset = load_dataset(f"hf://mteb/nfcorpus@{SHA}", options=ReaderOptions(document_parts="both"))
         with pytest.raises(DataError, match="needs a media column"):
             _ = dataset.corpus
     with hub("mteb-blink-it2i"):
-        dataset = load_dataset("hf://mteb/blink-it2i", revision=SHA, document_parts="both")
+        dataset = load_dataset("hf://mteb/blink-it2i", revision=SHA, options=ReaderOptions(document_parts="both"))
         with pytest.raises(DataError, match="needs a text column"):
             _ = dataset.corpus
 
@@ -459,7 +467,7 @@ def test_a_conflicting_duplicate_is_refused_naming_the_rows(hub) -> None:
 def test_duplicates_last_takes_the_last_row_as_mteb_does(hub) -> None:
     with hub("rcp-ndcg-nanobeir") as root:
         _labelled_twice(root, grades=(1.0, 2.0))
-        dataset = load_dataset(f"{NANOBEIR}@{SHA}", duplicates="last")
+        dataset = load_dataset(f"{NANOBEIR}@{SHA}", options=ReaderOptions(duplicates="last"))
         (judged,) = dataset.qrels.values()
         assert list(judged.values()) == [2.0]
         assert dataset.provenance.duplicates is not None
@@ -605,7 +613,7 @@ def test_an_unknown_hub_option_is_a_typed_config_error() -> None:
     option check keeps the typed contract."""
     with hub_fixture("mteb-nfcorpus"):
         with pytest.raises(ConfigError, match="takes no option"):
-            load_dataset(f"hf://mteb/nfcorpus@{SHA}", corpus_split="corpus")
+            load_dataset(f"hf://mteb/nfcorpus@{SHA}", options=ReaderOptions(corpus_split="corpus"))
 
 
 def test_document_parts_is_a_corpus_setting_only(hub) -> None:
@@ -617,7 +625,7 @@ def test_document_parts_is_a_corpus_setting_only(hub) -> None:
         frame["text"] = ["an OCR transcription" for _ in frame.index]  # a multi-column corpus row
         frame.to_parquet(path)
 
-        dataset = load_dataset("hf://mteb/blink-it2i", revision=SHA, document_parts="text")
+        dataset = load_dataset("hf://mteb/blink-it2i", revision=SHA, options=ReaderOptions(document_parts="text"))
         (query,) = dataset.queries.values()
         assert query.as_content.has_media, "the query keeps its image"
         (document,) = dataset.corpus.values()
@@ -647,7 +655,9 @@ def test_duplicates_last_cannot_resolve_a_streamed_corpus_row(hub) -> None:
         conflicting["text"] = "a different page"
         pd.concat([frame, pd.DataFrame([conflicting])], ignore_index=True).to_parquet(path)
 
-        dataset = load_dataset(f"hf://vidore/vidore_v3_finance_en_mteb_format/english@{SHA}", duplicates="last")
+        dataset = load_dataset(
+            f"hf://vidore/vidore_v3_finance_en_mteb_format/english@{SHA}", options=ReaderOptions(duplicates="last")
+        )
         with pytest.raises(DataError, match="appears twice with different content") as caught:
             _ = dataset.corpus
         assert "cannot replace a row it has already yielded" in str(caught.value.hint)
@@ -663,7 +673,7 @@ def test_duplicates_last_resolves_a_pool_conflict(hub) -> None:
         conflicting["corpus-ids"] = ["apositive_test_query0_00001"]
         pd.concat([frame, pd.DataFrame([conflicting])], ignore_index=True).to_parquet(path)
 
-        dataset = load_dataset(f"hf://mteb/AskUbuntuDupQuestions@{SHA}", duplicates="last")
+        dataset = load_dataset(f"hf://mteb/AskUbuntuDupQuestions@{SHA}", options=ReaderOptions(duplicates="last"))
         assert dataset.candidates["test_query0"] == ["apositive_test_query0_00001"], "the last pool wins"
         assert dataset.provenance.duplicates is not None
         assert dataset.provenance.duplicates.resolved == 1
@@ -777,5 +787,5 @@ def test_a_single_subset_repository_honours_an_explicit_name(hub) -> None:
     """``load_dataset('hf://mteb/nfcorpus@<sha>', name='nf')`` used to raise a bare TypeError ("got multiple
     values for keyword argument 'name'"): the single-subset branch passed ``name=`` beside the caller's."""
     with hub("mteb-nfcorpus"):
-        dataset = load_dataset(f"hf://mteb/nfcorpus@{SHA}", name="nf")
+        dataset = load_dataset(f"hf://mteb/nfcorpus@{SHA}", options=ReaderOptions(name="nf"))
         assert dataset.name == "nf"

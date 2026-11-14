@@ -540,7 +540,7 @@ fit(inputs: Sequence[str] | Sequence[tuple[str, str]], shape: RequestShape, budg
 function — Load a dataset from a URI (see the module docstring for the schemes).
 
 ```text
-load_dataset(uri: str, *, subset: str | None = None, revision: str | None = None, split: str | None = None, **options) -> Dataset
+load_dataset(uri: str, *, subset: str | None = None, revision: str | None = None, split: str | None = None, options: ReaderOptions | None = None) -> Dataset
 ```
 
 ## `load_embedding_store`

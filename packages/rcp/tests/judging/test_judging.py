@@ -12,6 +12,7 @@ import pytest
 from rcp_core.records import RankingExample
 from rcp_core.schemas import JudgementSet
 
+from rcp.data.dataset import ReaderOptions
 from rcp.data.preprocess import ChunkPolicy, Preprocessing, TextPolicy, chunk_ranking_example
 from rcp.data.tokenizer import load_tokenizer
 from rcp.errors import CapabilityError, ConfigError, DataError, IdentityError
@@ -1343,7 +1344,9 @@ class TestIdentities:
         qrels.write_text(json.dumps({"query_id": "q1", "qrels": {"docA/page_1": 1}}) + "\n", encoding="utf-8")
 
         def dataset():
-            return load_dataset(f"images:{images}", queries_uri=str(queries), qrels_uri=str(qrels))
+            return load_dataset(
+                f"images:{images}", options=ReaderOptions(queries_uri=str(queries), qrels_uri=str(qrels))
+            )
 
         def client() -> FakeJudge:
             return FakeJudge(lambda text: 0.0, config=JudgeConfig.fake(0).model_copy(update={"max_images": 10}))

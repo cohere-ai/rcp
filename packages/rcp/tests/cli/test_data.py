@@ -211,8 +211,9 @@ class TestIngestShapes:
     def test_the_name_option_names_the_dataset(self, ranking_jsonl: str) -> None:
         """``name`` is a reader option like any other; it must not collide with the reader's format argument."""
         from rcp.data import load_dataset
+        from rcp.data.dataset import ReaderOptions
 
-        assert load_dataset(f"jsonl:{ranking_jsonl}", name="tinyx").name == "tinyx"
+        assert load_dataset(f"jsonl:{ranking_jsonl}", options=ReaderOptions(name="tinyx")).name == "tinyx"
 
     def test_an_option_the_reader_does_not_take_is_a_usage_error(
         self, runner: CliRunner, ranking_jsonl: str, tmp_path: Path

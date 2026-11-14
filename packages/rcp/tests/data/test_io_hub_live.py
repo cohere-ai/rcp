@@ -16,6 +16,7 @@ import os
 import pytest
 
 from rcp.data import load_dataset
+from rcp.data.dataset import ReaderOptions
 from rcp.data.io.hub import hub_subsets
 from rcp.errors import ConfigError
 
@@ -128,7 +129,7 @@ def test_the_canonical_repositories_hold_no_duplicate_labels() -> None:
 
     measured: list[str] = []
     for repo, subset, corpus_too in MEASURED:
-        dataset = load_dataset(f"hf://{repo}{subset}@{PINS[repo]}", duplicates="last")
+        dataset = load_dataset(f"hf://{repo}{subset}@{PINS[repo]}", options=ReaderOptions(duplicates="last"))
         counts = dataset.provenance.duplicates
         assert counts is not None
         reader = HubReader(f"{repo}{subset}", revision=PINS[repo])

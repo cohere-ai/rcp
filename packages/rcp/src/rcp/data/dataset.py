@@ -26,6 +26,7 @@ import math
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import Any, Literal, NamedTuple
 
+from configkit.spec import OptionSchema
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError, field_validator
 from rcp_core.records import Document, Query
 
@@ -362,13 +363,30 @@ def _check_ids(
             )
 
 
+class ReaderOptions(OptionSchema):
+    """A reader's options, as one declared model instead of a ``**options: Any`` mapping (rcp-24).
+
+    The options a reader takes are its own -- ``qrels_uri`` and ``queries_uri`` for ``images:``, ``duplicates``
+    for a Hub repository, ``name`` for any of them -- so this model accepts every key and keeps it, and the
+    *reader* stays the authority on which keys exist (:func:`rcp.data.io.get_reader` refuses one it does not
+    take, naming the ones it does). What the model buys is a type at :func:`load_dataset`'s signature and one
+    place to build the options from a mapping or a config block::
+
+        load_dataset("images:/data/vidore", options=ReaderOptions(queries_uri="q.jsonl"))
+
+    It is frozen, so the options one call was given cannot change under it.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+
 def load_dataset(
     uri: str,
     *,
     subset: str | None = None,
     revision: str | None = None,
     split: str | None = None,
-    **options: Any,
+    options: ReaderOptions | None = None,
 ) -> Dataset:
     """Load a dataset from a URI (see the module docstring for the schemes).
 
@@ -383,7 +401,8 @@ def load_dataset(
         split: The split to read (a ``beir:`` qrels split, an ``hf://`` or ``mteb:`` split); ``None`` is
             ``"test"``, or whatever the source's own convention resolves to (a BEIR directory's first qrels
             file; a Hub config's only split).
-        options: Reader options for the reader schemes, e.g. ``qrels_uri`` and ``queries_uri`` for ``images:``.
+        options: The reader's own options (:class:`ReaderOptions`), e.g. ``qrels_uri`` and ``queries_uri`` for
+            ``images:``.
 
     Returns:
         The :class:`Dataset`.
@@ -396,20 +415,21 @@ def load_dataset(
     scheme, sep, rest = uri.partition(":")
     if not sep or not rest:
         raise ConfigError(f"dataset URI {uri!r} has no scheme", hint=f"use one of {_scheme_list()}")
+    carried = dict(options) if options is not None else {}
     if scheme == "hf":
         if not rest.startswith("//"):
             raise ConfigError(f"a Hub dataset URI starts with 'hf://', got {uri!r}")
-        return _load_hub(rest[2:], subset=subset, revision=revision, split=split, options=options)
+        return _load_hub(rest[2:], subset=subset, revision=revision, split=split, options=carried)
     if scheme == "suite":
-        return _load_suite_uri(rest, subset=subset, revision=revision, split=split, options=options)
+        return _load_suite_uri(rest, subset=subset, revision=revision, split=split, options=carried)
     if scheme in READERS and scheme not in _NOT_DATASETS:
         if subset is not None or revision is not None:
             raise ConfigError(f"subset and revision apply to hf:// and suite: URIs, not {scheme}:")
         if split is not None:
-            if "split" in options:
-                raise ConfigError(f"two splits for one dataset: {options['split']!r} and {split!r}")
-            options = {**options, "split": split}
-        return _from_reader(get_reader(scheme, uri=rest, **options), uri=uri)
+            if "split" in carried:
+                raise ConfigError(f"two splits for one dataset: {carried['split']!r} and {split!r}")
+            carried = {**carried, "split": split}
+        return _from_reader(get_reader(scheme, uri=rest, **carried), uri=uri)
     raise ConfigError(f"unknown dataset URI scheme {scheme!r} in {uri!r}", hint=f"use one of {_scheme_list()}")
 
 
@@ -623,4 +643,4 @@ def _subset_dir(suite: str | None, subset: str) -> str:
     return subset
 
 
-__all__ = ["SUITES", "VIDORE_NATIVE_LANGUAGE", "Dataset", "QrelRow", "Suite", "load_dataset"]
+__all__ = ["SUITES", "VIDORE_NATIVE_LANGUAGE", "Dataset", "QrelRow", "ReaderOptions", "Suite", "load_dataset"]
