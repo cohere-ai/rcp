@@ -37,9 +37,11 @@ def _digest(text: str = "payload") -> str:
 def test_byte_identical_to_the_recorded_fixture() -> None:
     """D4/B1: every recorded payload serialises to the recorded bytes and hashes to the recorded digest.
 
-    The record is the one ``rcp_core._hashing`` and ``emb_eval_contracts.identity`` produce; ``-0.0``, a ``Path``
-    and an ``Enum`` member are in the corpus because those are the three rows where the two serialisers could
-    disagree, and ``test_identity_parity.py`` compares the core's output against the same record.
+    The record is the one ``rcp_core._hashing`` produced, and ``emb_eval_contracts.identity``'s copy produced it
+    too; that distribution is not in this tree, so its entry in ``recorded_with`` is provenance and no test here
+    runs it. ``-0.0``, a ``Path`` and an ``Enum`` member are in the corpus because those are the three rows where
+    the serialisers could disagree, and ``test_identity_parity.py`` compares the core's output against the same
+    record.
     """
     document = json.loads(FIXTURE.read_text(encoding="utf-8"))
     assert document["recorded_with"] == [

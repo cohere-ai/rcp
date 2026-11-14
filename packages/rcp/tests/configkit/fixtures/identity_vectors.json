@@ -4,7 +4,7 @@
     "emb_eval_contracts.identity.canonical_json and emb_eval_contracts.identity.hash_payload",
     "configkit.identity.canonical_bytes and configkit.identity.hash_payload"
   ],
-  "agreement": "every implementation in recorded_with produced the recorded canonical text and digest for every vector; test_identity.py checks configkit against the record and test_identity_parity.py checks rcp_core against the same record, so the two are compared rather than trusted",
+  "agreement": "the two implementations in this tree, configkit.identity and rcp_core._hashing, produce the recorded canonical text and digest for every vector: test_identity.py checks configkit against the record and test_identity_parity.py checks rcp_core against the same record, so the two are compared rather than trusted. The emb_eval_contracts entry records where the corpus came from (emb-eval's own copy, which re-exports these functions after the extraction); it is provenance, not a third check: that distribution is not in this tree, so no test here runs it",
   "payload_kinds": {
     "path": "the payload is Path(<the recorded string>)",
     "enum": "the payload is _Tie(<the recorded string>), a str Enum member"
