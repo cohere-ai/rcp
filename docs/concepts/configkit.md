@@ -1265,6 +1265,7 @@ the one place that must not repeat it, so every argument is explicit and none ha
 | `tests/test_identity_parity.py` | the cross-distribution parity with `rcp_core._hashing`, byte for byte, skipped when the core is not installed |
 | `tests/test_public_surface.py` | the library is in no `PUBLIC_MODULES` entry and in no contract snapshot |
 | `tests/test_library_docs.py` | this page's module tree and test table name exactly what the tree has |
+| `tests/test_distribution.py` | the library is `cohere-configkit` at the carved path, not a module of the product's wheel |
 
 The library carries its own tests and its own folder (emb-train 33), and it depends on no test-double package.
 **No library test imports a consumer, and no library test writes a personal path** (review 2, F3): the
