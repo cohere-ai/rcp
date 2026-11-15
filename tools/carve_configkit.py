@@ -31,11 +31,17 @@ nor the carved one.
 from __future__ import annotations
 
 import argparse
+import re
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 __all__ = ["MOVES", "OLD_ROOTS", "REQUIRED_FILES", "SUBSTITUTIONS", "main", "run"]
+
+#: The name a manifest line declares: a table key (``testpaths = [...]``) or the requirement a dependency list
+#: names (``"cohere-configkit==0.0.1",``). A comment or a table header declares none.
+_DECLARATION = re.compile(r"\s*[\"']?([A-Za-z0-9][A-Za-z0-9_.-]*)")
 
 MOVES: tuple[tuple[str, str], ...] = (
     # The library's source and its suite, each gaining the packages/ level under the new member. The
@@ -100,6 +106,21 @@ def _tracked_files(root: Path) -> list[Path]:
     return [Path(name) for name in proc.stdout.split("\0") if name]
 
 
+def _declares(line: str) -> str | None:
+    """The key *line* declares, or ``None`` for a line that declares none (a comment, a table header)."""
+    match = _DECLARATION.match(line)
+    return match.group(1) if match else None
+
+
+def _parse_problem(text: str) -> str | None:
+    """``None`` when *text* is TOML, else the parse error: the transform never writes what ``uv`` cannot read."""
+    try:
+        tomllib.loads(text)
+    except tomllib.TOMLDecodeError as exc:
+        return str(exc)
+    return None
+
+
 def _substitute(
     root: Path,
     manifest: str,
@@ -114,23 +135,42 @@ def _substitute(
     Inputs: the repository root, the manifest's path relative to it, the pre-carve line (``None`` for
     an insertion), the carved line, and the line an insertion goes after. Outputs: whether the
     manifest changed, and the refusal when the line could be neither found nor inserted.
+
+    A manifest that holds both spellings is a duplicate TOML key, and an insertion whose key is already
+    declared with another value would insert a twin: both are refused rather than counted as carved.
     """
     path = root / manifest
     if not path.is_file():
         return False, f"{manifest}: missing (the carve-out's manifest is not in this tree)"
-    lines = path.read_text(encoding="utf-8").splitlines()
+    text = path.read_text(encoding="utf-8")
+    lines = text.splitlines()
     if after in lines:
+        if before is not None and before in lines:
+            return False, f"{manifest}: both {before!r} and {after!r} are present (a duplicate key)"
+        if lines.count(after) > 1:
+            return False, f"{manifest}: {after!r} appears {lines.count(after)} times (a duplicate key)"
+        if (problem := _parse_problem(text)) is not None:
+            return False, f"{manifest}: is not TOML ({problem})"
         return False, None
     if before is not None and before in lines:
+        if lines.count(before) > 1:
+            return False, f"{manifest}: {before!r} appears {lines.count(before)} times (a line to replace is unique)"
         lines[lines.index(before)] = after
     elif before is None and anchor is not None and anchor in lines:
+        key = _declares(after)
+        declared = [line for line in lines if key is not None and _declares(line) == key and line.strip() != after]
+        if declared:
+            return False, f"{manifest}: {key!r} is already declared as {declared[0].strip()!r} (refusing a twin)"
         lines.insert(lines.index(anchor) + 1, after)
     else:
         wanted = before if before is not None else anchor
         return False, f"{manifest}: no {wanted!r} to carry {after!r}"
     if check:
         return False, f"{manifest}: {after!r} is missing (the manifest is not substituted)"
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    rewritten = "\n".join(lines) + "\n"
+    if (problem := _parse_problem(rewritten)) is not None:
+        return False, f"{manifest}: the substitution would not be TOML ({problem}); nothing was written"
+    path.write_text(rewritten, encoding="utf-8")
     return True, None
 
 

@@ -245,3 +245,81 @@ def test_a_drifted_manifest_is_refused_rather_than_guessed(tmp_path: Path) -> No
     proc = carve(repo)
     assert proc.returncode == 1
     assert 'pyproject.toml: no \'testpaths = ["tests", "packages/rcp/tests"' in proc.stderr
+
+
+def test_both_spellings_of_one_line_are_refused(tmp_path: Path) -> None:
+    """A manifest holding the pre-carve line *and* the carved one is a duplicate TOML key, not a carved tree.
+
+    The short-circuit on the carved spelling called that tree carved and exited 0; ``run`` left the twin key in
+    place and staged a manifest ``tomllib`` (and ``uv``) refuses.
+    """
+    repo = make_fixture(tmp_path)
+    manifest = repo / "pyproject.toml"
+    pre_carve = 'testpaths = ["tests", "packages/rcp/tests", "packages/rcp-core/tests"]'
+    carved = 'testpaths = ["tests", "packages/rcp/tests", "packages/rcp-core/tests", "packages/configkit/tests"]'
+    manifest.write_text(
+        manifest.read_text(encoding="utf-8").replace(pre_carve, f"{pre_carve}\n{carved}"), encoding="utf-8"
+    )
+    git(repo, "add", "pyproject.toml")
+    checked = carve(repo, "--check")
+    assert checked.returncode == 1
+    assert "pyproject.toml: both " in checked.stderr and "testpaths" in checked.stderr
+
+    run = carve(repo)
+    assert run.returncode == 1
+    assert "pyproject.toml: both " in run.stderr
+    # the manifest is untouched: the run refused the line instead of rewriting or staging it
+    text = manifest.read_text(encoding="utf-8")
+    assert text.count(pre_carve) == 1 and text.count(carved) == 1
+
+
+def test_an_insertion_with_a_conflicting_value_is_refused(tmp_path: Path) -> None:
+    """The key is already declared with another value: refuse it, never insert a second declaration of it."""
+    repo = make_fixture(tmp_path)
+    manifest = repo / "pyproject.toml"
+    manifest.write_text(
+        manifest.read_text(encoding="utf-8").replace(
+            "rcp-test = { workspace = true }",
+            "rcp-test = { workspace = true }\ncohere-configkit = { workspace = false }",
+        ),
+        encoding="utf-8",
+    )
+    git(repo, "add", "pyproject.toml")
+    proc = carve(repo)
+    assert proc.returncode == 1
+    assert "'cohere-configkit' is already declared as 'cohere-configkit = { workspace = false }'" in proc.stderr
+    text = manifest.read_text(encoding="utf-8")
+    assert text.count("cohere-configkit = ") == 1
+
+
+def test_a_dependency_pin_at_another_version_is_refused(tmp_path: Path) -> None:
+    """The requirement is already in the list at another pin: the key is matched, so no twin line is inserted."""
+    repo = make_fixture(tmp_path)
+    manifest = repo / "packages" / "rcp" / "pyproject.toml"
+    manifest.write_text(
+        manifest.read_text(encoding="utf-8").replace(
+            '  "cohere-rcp-core==0.0.1",', '  "cohere-rcp-core==0.0.1",\n  "cohere-configkit==0.0.2",'
+        ),
+        encoding="utf-8",
+    )
+    git(repo, "add", "packages/rcp/pyproject.toml")
+    proc = carve(repo)
+    assert proc.returncode == 1
+    assert "'cohere-configkit' is already declared as '\"cohere-configkit==0.0.2\",'" in proc.stderr
+    assert manifest.read_text(encoding="utf-8").count("cohere-configkit==") == 1
+
+
+def test_a_manifest_that_does_not_parse_is_refused(tmp_path: Path) -> None:
+    """A duplicate key anywhere is invalid TOML: the transform refuses it instead of calling the tree carved."""
+    repo = make_fixture(tmp_path)
+    assert carve(repo).returncode == 0
+    for name in PACKAGE_FILES:
+        path = repo / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("", encoding="utf-8")
+    manifest = repo / "pyproject.toml"
+    manifest.write_text(manifest.read_text(encoding="utf-8") + "include = []\n", encoding="utf-8")
+    git(repo, "add", "-A")
+    checked = carve(repo, "--check")
+    assert checked.returncode == 1
+    assert "pyproject.toml: is not TOML" in checked.stderr
