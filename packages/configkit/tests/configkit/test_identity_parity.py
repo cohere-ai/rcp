@@ -1,12 +1,12 @@
 """One canonical form in two implementations: ``configkit.identity`` and ``rcp_core._hashing`` agree byte for byte.
 
-The library ships inside the ``cohere-rcp`` wheel and may not import ``rcp_core`` (A1), so the rule exists twice
-while the extraction is pending; this module is what keeps the two copies one rule. It reads the recorded corpus
-``test_identity.py`` reads and asserts the **core's** output against the same bytes and digests, so neither
-implementation is trusted on its own: a change to either reddens here.
+The library is its own distribution (``cohere-configkit``) and may not import ``rcp_core`` (A1), so the rule
+exists twice; this module is what keeps the two copies one rule. It reads the recorded corpus ``test_identity.py``
+reads and asserts the **core's** output against the same bytes and digests, so neither implementation is trusted on
+its own: a change to either reddens here.
 
-The module is skipped when ``rcp_core`` is absent, which is the state after the library moves out of the wheel:
-the recorded fixture is then the only guard, and the parity becomes the consumer's test (R7b).
+The module is skipped when ``cohere-rcp-core`` is not installed: the recorded fixture is then the only guard, and
+the runtime parity belongs to the consumer's own suite.
 """
 
 from __future__ import annotations

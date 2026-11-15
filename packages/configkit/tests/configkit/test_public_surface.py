@@ -1,9 +1,9 @@
 """The surface decision (H10): ``configkit`` is not a public module, and this test is where that is recorded.
 
-The library ships inside the ``cohere-rcp`` wheel, so its names are additive to the product's surface (A3) and
-appear in no ``tests/contract/snapshots/`` file. The decision was recorded in ``CHANGELOG.md``'s Unreleased ->
-Internal entry and in the plan; a *test* is what makes a change to it red, because the snapshot is the definition
-of public and nothing else reads this list for the library.
+The library is its own distribution (``cohere-configkit``), so its names are additive to the product's surface
+(A3) and appear in no ``tests/contract/snapshots/`` file. The exclusion is a product decision, recorded in
+``CHANGELOG.md``'s Unreleased -> Internal entry; a *test* is what makes a change to it red, because the snapshot
+is the definition of public and nothing else reads this list for the library.
 
 Two failures this guards: adding ``configkit`` to ``PUBLIC_MODULES`` without regenerating the snapshots (the
 first assertion), and a snapshot that starts recording a library name by accident (the second). The inclusion
