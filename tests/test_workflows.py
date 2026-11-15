@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -61,3 +62,24 @@ def test_the_recipe_tests_job_relies_on_the_sigalrm_guard_not_faulthandler_timeo
     commands = "\n".join(str(step.get("run", "")) for step in document["jobs"]["recipe-tests"]["steps"])
     assert "faulthandler_timeout" not in commands
     assert "RCP_NDCG_TEST_TIMEOUT" in commands, "the per-test SIGALRM guard covers the job"
+
+
+def _nightly() -> dict:
+    nightly = next(path for path in _WORKFLOWS if path.name == "nightly.yml")
+    return yaml.safe_load(nightly.read_text(encoding="utf-8"))
+
+
+def test_the_nightly_shuffles_every_tree_the_root_suite_collects() -> None:
+    """The shuffled run is the ordering proof for the trees one pytest process collects, so it collects exactly
+    the root ``testpaths``: a tree added there and not here is a suite whose order nobody shuffles (the
+    library's was). The two own-process trees stay out -- their jobs collect them."""
+    root = Path(__file__).resolve().parents[1]
+    manifest = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+    testpaths = manifest["tool"]["pytest"]["ini_options"]["testpaths"]
+    commands = [str(step.get("run", "")) for step in _nightly()["jobs"]["shuffled"]["steps"]]
+    collected = [
+        line for command in commands for line in command.splitlines() if "pytest" in line and "--collect-only" in line
+    ]
+    assert len(collected) == 1, "the nightly collects the shuffled ids once"
+    trees = [arg.rstrip("/") for arg in collected[0].split() if arg.startswith(("tests", "packages/"))]
+    assert trees == list(testpaths), trees
