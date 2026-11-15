@@ -357,7 +357,9 @@ class BudgetKey:
     """The key of one budget: a request shape and a role (rcp-18).
 
     A role's budget is per shape -- a query's cap and a document's are two numbers -- so the table is keyed by the
-    pair, and a role that declares no budget for a shape has no entry rather than a default.
+    pair, and a role that declares no budget for a shape has no entry rather than a default. The budget the key
+    names is a token count under the shape's tokenizer (never seconds, rows or money), the unit
+    :func:`cut_for` reports.
 
     Attributes:
         shape: The request shape the budget applies to (``"query"``, ``"document"``, ``"pair"``).
