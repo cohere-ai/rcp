@@ -3,8 +3,9 @@
 The tests run the real script against a small fixture repository under ``tmp_path``: the two moves,
 the four manifest substitutions, a second run that changes nothing, and the refusals (an unmoved
 source, a conflicting target, a surviving old path, a drifted manifest, a missing package file). The
-checkout is only ever read -- at C0 the real tree is *not* carved, so an assertion on it would be red
-by design; the real-tree ``--check`` belongs to the commit that runs the transform.
+checkout is only ever read: one test runs ``--check`` on the real tree -- the carve landed, so the tool's
+own claim is green there and the four after-spellings are pinned against the real manifests -- and every
+other test builds its own fixture.
 """
 
 from __future__ import annotations
@@ -323,3 +324,24 @@ def test_a_manifest_that_does_not_parse_is_refused(tmp_path: Path) -> None:
     checked = carve(repo, "--check")
     assert checked.returncode == 1
     assert "pyproject.toml: is not TOML" in checked.stderr
+
+
+def test_the_checkout_is_carved() -> None:
+    """``--check`` must pass on the real checkout, and the four substituted lines are the ones it carries.
+
+    The twin of ``test_the_checkout_is_in_the_target_layout`` for the carve: a fixture cannot see the real
+    manifests, so without this the four ``SUBSTITUTIONS`` after-spellings and the six ``REQUIRED_FILES`` could
+    drift from the tree until a replay or a tag noticed.
+    """
+    root = REAL_SCRIPT.parents[1]
+    proc = subprocess.run(
+        [sys.executable, "tools/carve_configkit.py", "--check"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "the tree is carved" in proc.stdout
+    for manifest, _before, after, _anchor in tool().SUBSTITUTIONS:
+        assert after in (root / manifest).read_text(encoding="utf-8").splitlines(), f"{manifest}: {after!r}"
