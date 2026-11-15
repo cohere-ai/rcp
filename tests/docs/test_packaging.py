@@ -613,8 +613,9 @@ DEPENDENCY_GATES = {
     "rcp_core": "workspace",  # the sibling the product pins, always installed beside it
 }
 
-#: The workspace's distributions, by the import name a gate names: the four ``pyproject.toml`` project names.
+#: The workspace's distributions, by the import name a gate names: the five ``pyproject.toml`` project names.
 WORKSPACE_DISTRIBUTIONS = {
+    "configkit": "cohere-configkit",
     "rcp": "cohere-rcp",
     "rcp_core": "cohere-rcp-core",
     "rcp_test": "rcp-test",
@@ -622,8 +623,26 @@ WORKSPACE_DISTRIBUTIONS = {
 }
 
 
+def _workspace_project_names() -> set[str]:
+    """Every ``[project].name`` under ``packages/``: the workspace's members, read from their own manifests."""
+    return {
+        tomllib.loads((folder / "pyproject.toml").read_text(encoding="utf-8"))["project"]["name"]
+        for folder in sorted((ROOT / "packages").iterdir())
+        if (folder / "pyproject.toml").is_file()
+    }
+
+
+def test_the_workspace_table_names_every_member() -> None:
+    """The table is the workspace's member list by import name; a member it omits makes a gate row a lie.
+
+    The carve-out added a fifth member and the table still said four, so a gate row for the library would
+    have failed with "the table calls it not a workspace distribution".
+    """
+    assert set(WORKSPACE_DISTRIBUTIONS.values()) == _workspace_project_names()
+
+
 def _the_offline_suite() -> list[Path]:
-    """Every test module one pytest process collects offline: the root tree and the three distribution trees
+    """Every test module one pytest process collects offline: the root tree and the four distribution trees
     it was split into. ``packages/rcp-test/tests`` and ``packages/rcp-vllm/tests`` run in their own
     processes (their own jobs), so their gates and marks are not this suite's."""
     trees = (
@@ -648,10 +667,7 @@ def test_every_dependency_gate_in_tests_opens_in_ci() -> None:
         found.update(re.findall(r"importorskip\(\s*[\"']([A-Za-z0-9_]+)", path.read_text(encoding="utf-8")))
     assert found == set(DEPENDENCY_GATES), f"gates and the table disagree: {sorted(found ^ set(DEPENDENCY_GATES))}"
     core = {Requirement(spec).name.lower() for spec in PYPROJECT["project"]["dependencies"]}
-    workspace = {
-        tomllib.loads((ROOT / "packages" / package / "pyproject.toml").read_text(encoding="utf-8"))["project"]["name"]
-        for package in ("rcp", "rcp-core", "rcp-test", "rcp-vllm")
-    }
+    workspace = _workspace_project_names()
     lock = tomllib.loads((ROOT / "uv.lock").read_text(encoding="utf-8"))["package"]
     requirement_name = re.compile(r"[A-Za-z0-9._-]+")
     deps_of = {
