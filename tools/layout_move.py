@@ -768,7 +768,7 @@ known-first-party = ["rcp"]
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="layout_move", description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(prog="layout_move", description=(__doc__ or "").splitlines()[0])
     parser.add_argument("--check", action="store_true", help="verify the tree only; change nothing")
     parser.add_argument("--repo", type=Path, default=None, help="the repository to transform (default: this one)")
     args = parser.parse_args(argv)
