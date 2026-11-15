@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-#: The repository root: ``packages/rcp/tests/configkit`` -> four parents up.
+#: The repository root: ``packages/configkit/tests/configkit`` -> four parents up.
 REPOSITORY = Path(__file__).resolve().parents[4]
 
 #: The snapshot directory the contract suite pins the public surface in.

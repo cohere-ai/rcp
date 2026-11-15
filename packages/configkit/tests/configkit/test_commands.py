@@ -36,7 +36,7 @@ from configkit.faults import Fault, ValueErrorFault, exit_codes
 from configkit.spec import Brand
 from pydantic import BaseModel, Field
 
-#: ``packages/rcp/src/configkit``: the package whose source must hold no ``print`` call.
+#: ``packages/configkit/src/configkit``: the package whose source must hold no ``print`` call.
 PACKAGE = Path(__file__).resolve().parents[2] / "src/configkit"
 
 

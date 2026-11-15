@@ -27,7 +27,7 @@ from pathlib import Path
 
 import pytest
 
-#: ``packages/rcp/src/configkit``: the package under test, and the directory a finding is relative to.
+#: ``packages/configkit/src/configkit``: the package under test, and the directory a finding is relative to.
 PACKAGE = Path(__file__).resolve().parents[2] / "src/configkit"
 
 #: The top-level packages the library must never import: the product it ships in, its core and the serving half.

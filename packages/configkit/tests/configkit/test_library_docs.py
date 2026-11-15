@@ -11,13 +11,13 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-#: The repository root: ``packages/rcp/tests/configkit`` -> four parents up.
+#: The repository root: ``packages/configkit/tests/configkit`` -> four parents up.
 REPOSITORY = Path(__file__).resolve().parents[4]
 
 #: The page whose module tree this test reads.
 PAGE = REPOSITORY / "docs/concepts/configkit.md"
 
-#: ``packages/rcp/src/configkit``: the package the tree must describe.
+#: ``packages/configkit/src/configkit``: the package the tree must describe.
 PACKAGE = Path(__file__).resolve().parents[2] / "src/configkit"
 
 #: The heading the tree block sits under.
