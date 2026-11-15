@@ -43,7 +43,7 @@ _CREDENTIALS = (
 )
 
 #: The distributions the report names, in report order.
-_DISTRIBUTIONS = ("cohere-rcp", "cohere-rcp-core", "pydantic", "click", "torch")
+_DISTRIBUTIONS = ("cohere-rcp", "cohere-rcp-core", "cohere-configkit", "pydantic", "click", "torch")
 
 #: The sibling distribution whose version must equal this distribution's.
 _SIBLING = "cohere-rcp-core"

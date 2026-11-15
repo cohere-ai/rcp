@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import tomllib
 from pathlib import Path
 
 from click.testing import CliRunner
@@ -164,3 +165,19 @@ def test_the_report_is_built_from_the_librarys_doctor_facts() -> None:
     reported = [check.name.removeprefix("$") for check in report.checks if check.name.startswith("$")]
     assert reported == list(facts.credential_variables)
     assert facts.pinned_sibling is None  # the product compares the installed sibling, it does not read the pin
+
+
+def test_the_report_names_every_exactly_pinned_sibling() -> None:
+    """``cohere-rcp`` pins the core and the library exactly, and the report names both.
+
+    A broken install of either then shows in ``rcp doctor`` -- the command a person runs before a long job finds
+    out the hard way -- instead of at the first import.
+    """
+    manifest = tomllib.loads((ROOT / "packages/rcp/pyproject.toml").read_text(encoding="utf-8"))
+    pinned = {
+        requirement.split("==", 1)[0]
+        for requirement in manifest["project"]["dependencies"]
+        if requirement.startswith("cohere-") and "==" in requirement
+    }
+    report = execute(command_specs()["doctor"], {}).result
+    assert pinned <= set(report.versions), sorted(pinned - set(report.versions))
