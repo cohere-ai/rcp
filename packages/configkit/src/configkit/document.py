@@ -68,9 +68,9 @@ _SCHEMA: Final[str] = "schema"
 #: The key a document uses to name the file it extends. It is popped before validation, so no model declares it.
 _EXTENDS: Final[str] = "extends"
 
-#: The hint a missing YAML reader reports when the caller named none. It names no distribution, because the
-#: library ships in more than one and an install line that is wrong after the move is worse than a general one.
-_YAML_HINT: Final[str] = "install the YAML reader of the distribution that ships this library"
+#: The hint a missing YAML reader reports when the caller named none: this distribution's own extra, so the line
+#: a reader copies installs the reader. A caller may override it per call (``read(yaml_hint=...)``).
+_YAML_HINT: Final[str] = "pip install cohere-configkit[yaml]"
 
 
 def _refuse(message: str, *, code: str = "value_error", **details: Any) -> Fault:

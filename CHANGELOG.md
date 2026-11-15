@@ -100,7 +100,8 @@ configuration and command-line library the product, `emb-train` and `emb-eval` c
 change (`import configkit`), and it is not a public surface -- it is not in
 `rcp.support.api_docs.PUBLIC_MODULES`, so no name is added to `tests/contract/snapshots/`. It imports the
 standard library and `pydantic` only: no `rcp`, `rcp_core` or `rcp_vllm` module, no YAML reader at import time,
-and no file or environment read at import time.
+and no file or environment read at import time. Reading a YAML document is the distribution's `[yaml]` extra
+(`PyYAML`), which the default `optional.missing` hint names (`pip install cohere-configkit[yaml]`).
 `packages/configkit/tests/configkit/test_isolation.py` scans every file of the package and proves the same rule
 at run time from an extracted copy. `cohere-rcp` depends on it, pinned `cohere-configkit==<version>`, so a
 consumer adopts the configuration surface without the product's stack (numpy, pandas, pyarrow, scipy, bm25s,

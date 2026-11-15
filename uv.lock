@@ -647,8 +647,17 @@ dependencies = [
     { name = "pydantic" },
 ]
 
+[package.optional-dependencies]
+yaml = [
+    { name = "pyyaml" },
+]
+
 [package.metadata]
-requires-dist = [{ name = "pydantic", specifier = ">=2.11" }]
+requires-dist = [
+    { name = "pydantic", specifier = ">=2.11" },
+    { name = "pyyaml", marker = "extra == 'yaml'", specifier = ">=6" },
+]
+provides-extras = ["yaml"]
 
 [[package]]
 name = "cohere-rcp"

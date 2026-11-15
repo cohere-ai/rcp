@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import sys
+import tomllib
 from dataclasses import FrozenInstanceError
 from pathlib import Path
 from typing import Annotated, Any, ClassVar, Literal
@@ -294,6 +295,16 @@ def test_yaml_absent_raises_optional_missing_with_the_callers_hint(
     assert hint in caught.value.message
 
     assert read(json_doc).payload == {"name": "x"}
+
+
+def test_the_default_yaml_hint_is_the_distributions_own_extra() -> None:
+    """The default install line named no distribution ("the distribution that ships this library"), which after the
+    carve is the reader's own: the hint is the extra this manifest declares, so copying it installs the reader."""
+    from configkit.document import _YAML_HINT
+
+    manifest = tomllib.loads((Path(__file__).resolve().parents[2] / "pyproject.toml").read_text(encoding="utf-8"))
+    assert "yaml" in manifest["project"]["optional-dependencies"]
+    assert _YAML_HINT == f"pip install {manifest['project']['name']}[yaml]"
 
 
 # --- the validation-error mapper -----------------------------------------------------------------------------

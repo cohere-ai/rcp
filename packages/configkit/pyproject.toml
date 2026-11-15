@@ -27,6 +27,11 @@ dependencies = [
   "pydantic>=2.11",
 ]
 
+[project.optional-dependencies]
+# A YAML document is read with PyYAML, imported on the first read (a JSON document never imports it). The
+# default ``optional.missing`` hint names this extra, so the line a reader copies installs the reader.
+yaml = ["PyYAML>=6"]
+
 [project.urls]
 Homepage = "https://github.com/cohere-ai/rcp"
 Repository = "https://github.com/cohere-ai/rcp"
