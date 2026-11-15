@@ -2,18 +2,23 @@
 
 The shared configuration and command-line library of [RCP-nDCG](https://github.com/cohere-ai/rcp): one value
 rule, one canonical form, one document model, one override parser, one command tree. It is the library
-`cohere-rcp` configures itself with, published on its own so a second consumer can adopt the configuration
-surface without the product's stack.
+`cohere-rcp` configures itself with, and its own distribution (`cohere-configkit`) so a second consumer can adopt
+the configuration surface without the product's stack.
 
 It needs `pydantic` only. The library imports the standard library and `pydantic` and nothing else: it imports
 no module of the product (`rcp`, `rcp_core`, `rcp_vllm`), reads no file and no environment variable at import
-time, and imports no YAML reader until a YAML document is read.
+time, and imports no YAML reader until a YAML document is read (that reader is the `[yaml]` extra, `PyYAML`).
 
-Install it from PyPI (Python 3.12):
+The release builds the wheel and stages it in the release candidate's wheelhouse; publishing it to PyPI is a
+recorded separate decision -- the `cohere-configkit` project does not exist yet
+(`.github/workflows/release.yml` records the precondition) -- so install it from the checkout for now
+(Python 3.12):
 
 ```bash
-pip install cohere-configkit
+pip install ./packages/configkit
 ```
+
+`pip install cohere-configkit` (or `cohere-configkit[yaml]`) once the project is published.
 
 ```python
 from configkit import canonical_bytes, deep_merge, parse
