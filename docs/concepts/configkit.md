@@ -203,7 +203,7 @@ importing `rcp` elsewhere. It is a second change with its own risk, and it buys 
 | `vocab.py` | rcp 18, 25, 47; emb-train 4, 5, 6, 7, 8, 9 | ship a benchmark name or a data pin |
 | `spec.py` | rcp 6, 15, 50; emb-train 30; emb-eval M13 | import a service to define a type |
 | `audit.py` | R4; rcp 8, 20, 44, 48; emb-eval S18, S25, X2 | run at import, or at a run. A test calls it. It reads models and source, never the network. |
-| `__init__.py` | — | import anything but the fifteen above |
+| `__init__.py` | — | import anything but the thirteen above |
 
 ### `roles.py` — the one vocabulary
 
@@ -1252,7 +1252,7 @@ the one place that must not repeat it, so every argument is explicit and none ha
 | `tests/test_document.py` | the five v0 rules; the two path bases; the absolute path kept, and refused when a model declares `absolute_paths = False`; `config_error` on a `ValidationError` with a `SECRET` field; `FieldTypes` registered per test, no leak |
 | `tests/test_overrides.py` | the value ladder: `[a, b]` → `list`, `{k: v}` → `dict`, `key=` → `""`, `yes` → `True`, `5` → `int`; the precedence table; the error table; `merge_layers` refusal |
 | `tests/test_identity.py` | the digest against a recorded fixture from `rcp_core._hashing` and `emb_eval_contracts.identity`; `short` bounds; `freeze` depth; the run-id grammar |
-| `tests/test_schemas.py` | `accepted_schema_ids`; the removable spelling; `home_of` |
+| `tests/test_configkit_schemas.py` | `accepted_schema_ids`; the removable spelling; `home_of` |
 | `tests/test_faults.py` | registration order; a consumer row without importing its class; a warning code outside the set; `classify` with a mapper argument; the install line is the caller's string |
 | `tests/test_commands.py` | one spec → flags, envelope, MCP tool; the result model; `--json` declared once; the usage-error path; `customise` |
 | `tests/test_ports.py` | one protocol per call; no torch import; no handler at import, one sink, dedup once per key; no `print` in the package |
@@ -1261,8 +1261,10 @@ the one place that must not repeat it, so every argument is explicit and none ha
 | `tests/test_vocab.py` | each vocabulary constant; `WorldSize`; `DigestPin`; `BudgetKey`; `MetricKey` canonicalisation; an open `TaskKind` that a consumer extends |
 | `tests/test_spec.py` | `FrozenSpec`; `OperationOptions`; a record type defined outside a service |
 | `tests/test_audit.py` | every `audit` refusal; the graph walk from a root; every `scan` refusal, with one failing control per check; `pure` on one clean validator and one that opens a file |
-| `tests/test_isolation.py` | P1, P2, P3 and P4 as tests, each with its own negative control built in `tmp_path` |
-| `tests/test_seams.py`, `tests/test_render.py` | the library-internal half of C5 and C6 only; the consumer half is P5 and P6 |
+| `tests/test_isolation.py` | P1, P2, P3 and P4 as tests, each with its own negative control built in `tmp_path`; the suite imports no consumer at module scope |
+| `tests/test_identity_parity.py` | the cross-distribution parity with `rcp_core._hashing`, byte for byte, skipped when the core is not installed |
+| `tests/test_public_surface.py` | the library is in no `PUBLIC_MODULES` entry and in no contract snapshot |
+| `tests/test_library_docs.py` | this page's module tree and test table name exactly what the tree has |
 
 The library carries its own tests and its own folder (emb-train 33), and it depends on no test-double package.
 **No library test imports a consumer, and no library test writes a personal path** (review 2, F3): the
