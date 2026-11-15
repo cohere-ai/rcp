@@ -199,10 +199,12 @@ manifest. See [Release candidates and the GPU waves](../how-to/release-candidate
 commands are:
 
 ```bash
-# the three published wheels, by name, as release.yml builds them (never --all-packages: the
-# unpublished fourth workspace member rcp-test must not be swept into the release files; the
-# pyproject.toml versions must match)
+# the four release wheels, by name, as release.yml builds them (never --all-packages: the
+# unpublished workspace member rcp-test must not be swept into the release files; the
+# pyproject.toml versions must match). cohere-configkit is built and installed from the
+# wheelhouse, but it is not published yet
 uv build --package=cohere-rcp-core --out-dir /shared/wheelhouse/<version>
+uv build --package=cohere-configkit --out-dir /shared/wheelhouse/<version>
 uv build --package=cohere-rcp --out-dir /shared/wheelhouse/<version>
 uv build --package=cohere-rcp-vllm --out-dir /shared/wheelhouse/<version>
 # the unpublished harness wheel (the node's client environment imports rcp_test), in its own directory

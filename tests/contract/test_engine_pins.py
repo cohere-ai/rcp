@@ -58,14 +58,22 @@ CLONE_ENV = "RCP_NDCG_VLLM_CHECKOUT"
 
 DEFAULT_CLONE = REPO / ".deps" / "vllm"
 
-#: The swept surface: the three ``src`` trees (the recipes live under the serving package's), the docs, the
-#: exported schemas, and the loose files -- the root NOTICE and the four distributions' NOTICEs, plus the
+#: The swept surface: the four ``src`` trees (the recipes live under the serving package's), the docs, the
+#: exported schemas, and the loose files -- the root NOTICE and the five distributions' NOTICEs, plus the
 #: reproducibility record.
-SWEPT_ROOTS = ("docs", "packages/rcp/src", "packages/rcp-test/src", "packages/rcp-vllm/src", "schemas")
+SWEPT_ROOTS = (
+    "docs",
+    "packages/rcp/src",
+    "packages/configkit/src",
+    "packages/rcp-test/src",
+    "packages/rcp-vllm/src",
+    "schemas",
+)
 SWEPT_FILES = (
     "NOTICE",
     "packages/rcp/NOTICE",
     "packages/rcp-core/NOTICE",
+    "packages/configkit/NOTICE",
     "packages/rcp-test/NOTICE",
     "packages/rcp-vllm/NOTICE",
     "REPRODUCIBILITY.md",

@@ -1,12 +1,12 @@
-"""The isolation proof (A1): the library imports nothing of the product it ships in.
+"""The isolation proof (A1): the library imports nothing of the product it ships beside.
 
-``configkit`` lives in the ``cohere-rcp`` wheel, so the only thing that makes a future move to another
-distribution a directory move is a rule the tree cannot break silently: the library imports no module of
-``rcp``, ``rcp_core`` or ``rcp_vllm``, uses no relative import (a relative import is a seam that would not
-survive the move), and reaches no product module through a string-literal import or a name built from one
-(``f"rcp.{name}"``, ``"rcp." + name``) either. The first half of
-this module parses every file of the package with :mod:`ast`, at every scope, and fails on a finding; the
-second half proves the same rule at run time, in a subprocess, and from an extracted copy of the package.
+``configkit`` is its own distribution (``cohere-configkit``), so this rule is what keeps it adoptable by a
+second consumer: the library imports no module of ``rcp``, ``rcp_core`` or ``rcp_vllm``, uses no relative
+import (a relative import is a seam that would not survive the move to another distribution), and reaches
+no product module through a string-literal import or a name built from one (``f"rcp.{name}"``,
+``"rcp." + name``) either. The first half of this module parses every file of the package with
+:mod:`ast`, at every scope, and fails on a finding; the second half proves the same rule at run time, in a
+subprocess, and from an extracted copy of the package.
 
 A check whose control cannot fail is not shipped (the contract's §11), so each leg carries a control: a copy
 of the package in ``tmp_path`` with one bad line appended must produce exactly one finding.

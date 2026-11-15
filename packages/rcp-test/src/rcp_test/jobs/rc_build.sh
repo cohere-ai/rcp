@@ -15,7 +15,7 @@
 #                     (private pairs, wave lists or recipes)
 #
 # Staged layout (what a wave installs from; see docs/how-to/release-candidates.md):
-#   <RC_NAME>/dist/                        the six release files, as release.yml builds them
+#   <RC_NAME>/dist/                        the eight release files, as release.yml builds them
 #   <RC_NAME>/harness/                     the harness wheel (the unpublished rcp-test), built by name
 #                                          into its own directory; the node's client environment installs it
 #   <RC_NAME>/wheelhouse/                  the release wheels + every locked dependency (the CPU torch build)
@@ -32,15 +32,18 @@
 
 set -euo pipefail
 
-# The published distributions, in release order (release.yml builds exactly these, one --package per
-# invocation; the fourth workspace member rcp-test is unpublished and is never built -- GPU-E1:
-# an --all-packages build staged its wheel and the dist/ check then refused the extra file).
-PUBLISHED_PACKAGES=("cohere-rcp-core" "cohere-rcp" "cohere-rcp-vllm")
+# The release distributions, in release order (release.yml builds exactly these, one --package per
+# invocation; the unpublished workspace member rcp-test is never built -- GPU-E1: an --all-packages
+# build staged its wheel and the dist/ check then refused the extra file). cohere-configkit is built
+# into dist/ and staged in the wheelhouse, but not published: cohere-rcp pins cohere-configkit==<version>
+# and the project is not on PyPI yet, so publishing it is a separate operator decision (release.yml
+# records the same precondition).
+RELEASE_PACKAGES=("cohere-rcp-core" "cohere-configkit" "cohere-rcp" "cohere-rcp-vllm")
 HARNESS_PACKAGE="rcp-test"
 
-build_published() { # build_published OUT_DIR: the three published distributions, by name, as release.yml
+build_release() { # build_release OUT_DIR: the release distributions, by name, as release.yml builds them
   local package
-  for package in "${PUBLISHED_PACKAGES[@]}"; do
+  for package in "${RELEASE_PACKAGES[@]}"; do
     uv build --package "$package" --out-dir "$1"
   done
 }
@@ -48,7 +51,7 @@ build_published() { # build_published OUT_DIR: the three published distributions
 build_harness() { # build_harness OUT_DIR: the unpublished harness wheel, by name, into ITS OWN directory
   # The node's client environment must import rcp_test (the wave runner, the plugin collector and
   # e2e all live there), and no published package names it -- so it is built here and staged under
-  # <stage>/harness/, never into dist/ (the six published files the check below asserts).
+  # <stage>/harness/, never into dist/ (the eight release files the check below asserts).
   uv build --package "$HARNESS_PACKAGE" --out-dir "$1"
 }
 
@@ -220,9 +223,9 @@ echo "rc_build: version $VERSION from $COMMIT"
 
 # --- the build and check steps of release.yml ---------------------------------------------
 
-echo "rc_build: building the three published distributions, by name (never --all-packages: the"
+echo "rc_build: building the release distributions, by name (never --all-packages: the"
 echo "  unpublished workspace member rcp-test must not stage a wheel in dist/)"
-build_published dist
+build_release dist
 echo "rc_build: building the harness wheel (rcp-test) into its own directory"
 build_harness "$WORK/harness"
 
@@ -230,6 +233,7 @@ echo "rc_build: checking the versions and the pins"
 expected=(
   "dist/cohere_rcp-${VERSION}-py3-none-any.whl" "dist/cohere_rcp-${VERSION}.tar.gz"
   "dist/cohere_rcp_core-${VERSION}-py3-none-any.whl" "dist/cohere_rcp_core-${VERSION}.tar.gz"
+  "dist/cohere_configkit-${VERSION}-py3-none-any.whl" "dist/cohere_configkit-${VERSION}.tar.gz"
   "dist/cohere_rcp_vllm-${VERSION}-py3-none-any.whl" "dist/cohere_rcp_vllm-${VERSION}.tar.gz"
 )
 for file in "${expected[@]}"; do

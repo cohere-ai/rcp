@@ -21,8 +21,9 @@ pull request that changes `tests/contract/snapshots/` or `schemas/` must add an 
 
 Every artifact schema carries its own version (`rcp.<name>.v1`), bumped only when that artifact changes
 incompatibly, independently of the package version. `rcp-ndcg.<name>.v1` is the spelling from before 0.0.1, and
-every reader still accepts it. All four distributions carry the tag version; `cohere-rcp` pins
-`cohere-rcp-core==<version>`; `cohere-rcp-vllm` pins no sibling; `rcp-test` is never published.
+every reader still accepts it. All five distributions carry the tag version; `cohere-rcp` pins
+`cohere-rcp-core==<version>` and `cohere-configkit==<version>`; `cohere-rcp-vllm` pins no sibling; `rcp-test`
+is never published.
 
 ## Unreleased
 
@@ -94,12 +95,17 @@ is unchanged.
 `seed=true` and `seed=1` as one value and silently kept the first; `deep_merge` already compared
 canonically, so the two doors now refuse and report the same pair.
 
-The wheel gains an internal package, `configkit`, at `packages/rcp/src/configkit/`: the shared configuration
-and command-line library the product, `emb-train` and `emb-eval` are to consume. It is not a public surface --
-it is not in `rcp.support.api_docs.PUBLIC_MODULES`, so no name is added to `tests/contract/snapshots/` -- and
-it imports the standard library and `pydantic` only: no `rcp`, `rcp_core` or `rcp_vllm` module, no YAML reader
-at import time, and no file or environment read at import time. `packages/rcp/tests/configkit/test_isolation.py`
-scans every file of the package and proves the same rule at run time from an extracted copy.
+The configuration library is its own distribution, `cohere-configkit`, at `packages/configkit/`: the shared
+configuration and command-line library the product, `emb-train` and `emb-eval` consume. Its import name does not
+change (`import configkit`), and it is not a public surface -- it is not in
+`rcp.support.api_docs.PUBLIC_MODULES`, so no name is added to `tests/contract/snapshots/`. It imports the
+standard library and `pydantic` only: no `rcp`, `rcp_core` or `rcp_vllm` module, no YAML reader at import time,
+and no file or environment read at import time.
+`packages/configkit/tests/configkit/test_isolation.py` scans every file of the package and proves the same rule
+at run time from an extracted copy. `cohere-rcp` depends on it, pinned `cohere-configkit==<version>`, so a
+consumer adopts the configuration surface without the product's stack (numpy, pandas, pyarrow, scipy, bm25s,
+click). The release workflow builds its wheel and stages it in the candidate's wheelhouse; it has no publish job
+yet, because the PyPI project does not exist, so a tag still publishes the other three distributions.
 
 The library's log facade takes its state as an argument: `LogState` is one small record (the root, the handler
 `configure` installed, the dedup keys and the lock), `Ports` carries one per record as `Ports.log`, and

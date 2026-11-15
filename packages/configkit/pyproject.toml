@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cohere-configkit"
+version = "0.0.1"
+description = "The shared configuration and command-line library: one value rule, one canonical form, one document model, one command tree."
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+requires-python = ">=3.12"
+authors = [
+  { name = "RCP-nDCG contributors" },
+]
+keywords = ["configuration", "command-line", "pydantic", "canonicalisation"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Science/Research",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Software Development :: Libraries",
+]
+# pydantic is the library's only hard dependency, on purpose: a consumer adopts the configuration
+# library without the product's stack (numpy, pandas, pyarrow, scipy, bm25s, click). 2.11 is the
+# floor because ``spec.OptionSchema`` validates by field name (``validate_by_name``).
+dependencies = [
+  "pydantic>=2.11",
+]
+
+[project.urls]
+Homepage = "https://github.com/cohere-ai/rcp"
+Repository = "https://github.com/cohere-ai/rcp"
+Paper = "https://arxiv.org/abs/2609.35739"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# ``py.typed`` travels with the wheel's one package, so a type checker reads the library's inline types
+# (it ships no separate stubs).
+[tool.setuptools.package-data]
+configkit = ["py.typed"]

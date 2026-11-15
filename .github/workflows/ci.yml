@@ -58,7 +58,7 @@ jobs:
         with:
           enable-cache: true
       - run: .github/scripts/cpu-env.sh dev
-      - run: uv run --no-sync pytest tests/ packages/rcp/tests packages/rcp-core/tests -q -n 4
+      - run: uv run --no-sync pytest tests/ packages/rcp/tests packages/rcp-core/tests packages/configkit/tests -q -n 4
       # Tests write only to temporary directories: the checkout must be as clean as before.
       - name: the tests left the checkout clean
         run: |
@@ -84,7 +84,7 @@ jobs:
       # Type-check with the integrations resolved: the `types` job installs `dev` alone, where every mteb,
       # datasets and transformers symbol is Unknown, so the code that uses them is never really checked.
       - run: uv run --no-sync basedpyright
-      - run: uv run --no-sync pytest tests/ packages/rcp/tests packages/rcp-core/tests -q -n 4
+      - run: uv run --no-sync pytest tests/ packages/rcp/tests packages/rcp-core/tests packages/configkit/tests -q -n 4
 
   contract:
     name: public surface
@@ -175,12 +175,16 @@ jobs:
       # Release gate 1 (AGENTS.md, "three release gates"): twine checks metadata only, so a wheel whose
       # entry points or package data are broken would pass the tag pipeline unchecked. Each published
       # distribution installs from its built wheel -- never from the checkout -- into its own fresh venv
-      # and must import and work there. rcp's wheel pins rcp-core exactly, so the sibling
-      # wheel comes from --find-links dist (the publish order ships core first), and the install runs
+      # and must import and work there. rcp's wheel pins rcp-core and configkit exactly, so the sibling
+      # wheels come from --find-links dist (the publish order ships core first), and the install runs
       # under the lock's constraints file so the resolution is the release's, not PyPI's latest.
-      - name: build the three published distributions
+      - name: build the release distributions
         run: |
           uv build --package cohere-rcp-core --out-dir dist
+          # cohere-rcp pins cohere-configkit==0.0.1 and the project is not on PyPI yet: the wheel is
+          # built here (and staged in the release candidate's wheelhouse) so the pin resolves from
+          # dist/, but release.yml publishes it only once that project exists (a separate decision).
+          uv build --package cohere-configkit --out-dir dist
           uv build --package cohere-rcp --out-dir dist
           uv build --package cohere-rcp-vllm --out-dir dist
       - name: the core wheel installs alone and computes the metric
@@ -219,7 +223,7 @@ jobs:
             'from rcp_vllm.recipe import iter_recipes; print(" ".join(r.id for r in iter_recipes()))'); do
             "$RUNNER_TEMP/wheel-vllm/bin/rcp-vllm" serve "$id" --dry-run >/dev/null
           done
-      - name: the rcp wheel installs (its core pin from dist/) and works
+      - name: the rcp wheel installs (its sibling pins from dist/) and works
         run: |
           uv venv "$RUNNER_TEMP/wheel-rcp" --python 3.12
           uv pip install --python "$RUNNER_TEMP/wheel-rcp/bin/python" \

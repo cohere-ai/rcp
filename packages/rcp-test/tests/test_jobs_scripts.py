@@ -1692,14 +1692,15 @@ def _stage_pairs(tmp_path: Path, checkout: Path) -> subprocess.CompletedProcess[
     )
 
 
-# --- rc_build.sh: the published distributions, by name (GPU-E1) ------------------------------
+# --- rc_build.sh: the release distributions, by name (GPU-E1) ---------------------------------
 
 
-def test_rc_build_builds_exactly_the_published_distributions(tmp_path: Path) -> None:
+def test_rc_build_builds_exactly_the_release_distributions(tmp_path: Path) -> None:
     """GPU-E1: ``uv build --all-packages`` picked up the unpublished workspace member rcp-test and
-    the build then refused ``dist/ holds other versions``.  The build step builds exactly the three
-    published distributions, by name, one ``--package`` per invocation as release.yml does -- and the
-    wheelhouse it stages lists no unpublished wheel."""
+    the build then refused ``dist/ holds other versions``.  The build step builds exactly the four
+    release distributions -- the three published ones and cohere-configkit, which is built but not
+    published -- by name, one ``--package`` per invocation as release.yml does, and the wheelhouse it
+    stages lists no unpublished wheel."""
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     log = tmp_path / "uv.log"
@@ -1722,7 +1723,7 @@ def test_rc_build_builds_exactly_the_published_distributions(tmp_path: Path) -> 
     (fake_bin / "uv").chmod(0o755)
     dist = tmp_path / "dist"
     completed = subprocess.run(
-        ["bash", "-c", f'source "{RC_BUILD}" && build_published "$1"', "bash", str(dist)],
+        ["bash", "-c", f'source "{RC_BUILD}" && build_release "$1"', "bash", str(dist)],
         capture_output=True,
         text=True,
         env={"PATH": f"{fake_bin}:/usr/bin:/bin", "HOME": str(tmp_path)},
@@ -1730,13 +1731,14 @@ def test_rc_build_builds_exactly_the_published_distributions(tmp_path: Path) -> 
     assert completed.returncode == 0, completed.stderr
     builds = [shlex.split(line) for line in log.read_text(encoding="utf-8").splitlines()]
     packages = [[words[words.index("--package") + 1] for words in builds if "--package" in words]][0]
-    assert packages == ["cohere-rcp-core", "cohere-rcp", "cohere-rcp-vllm"], builds  # release order, by name
+    assert packages == ["cohere-rcp-core", "cohere-configkit", "cohere-rcp", "cohere-rcp-vllm"], builds  # release order
     assert all("--all-packages" not in words for words in builds)
-    # The wheelhouse the build stages: exactly the published wheels, never the unpublished member's.
+    # The wheelhouse the build stages: exactly the release wheels, never the unpublished member's.
     wheelhouse = tmp_path / "wheelhouse"
     shutil.copytree(dist, wheelhouse)
     listed = sorted(path.name for path in wheelhouse.iterdir())
     assert listed == [
+        "cohere_configkit-0.0.1-py3-none-any.whl",
         "cohere_rcp-0.0.1-py3-none-any.whl",
         "cohere_rcp_core-0.0.1-py3-none-any.whl",
         "cohere_rcp_vllm-0.0.1-py3-none-any.whl",
@@ -1744,7 +1746,7 @@ def test_rc_build_builds_exactly_the_published_distributions(tmp_path: Path) -> 
     assert not any(name.startswith("rcp_test") for name in listed)
     assert "uv build --all-packages" not in RC_BUILD.read_text(encoding="utf-8")  # the trap is gone from the script
     # A2/A3: the unpublished harness distribution is built too, by name, into ITS OWN directory -- never
-    # dist/ (whose six published files the check above pins) -- and the node's client environment installs
+    # dist/ (whose eight release files the check above pins) -- and the node's client environment installs
     # it from <stage>/harness/.
     harness = tmp_path / "harness"
     completed = subprocess.run(
@@ -1756,7 +1758,7 @@ def test_rc_build_builds_exactly_the_published_distributions(tmp_path: Path) -> 
     assert completed.returncode == 0, completed.stderr
     builds = [shlex.split(line) for line in log.read_text(encoding="utf-8").splitlines()]
     packages = [[words[words.index("--package") + 1] for words in builds if "--package" in words]][0]
-    assert packages == ["cohere-rcp-core", "cohere-rcp", "cohere-rcp-vllm", "rcp-test"], builds
+    assert packages == ["cohere-rcp-core", "cohere-configkit", "cohere-rcp", "cohere-rcp-vllm", "rcp-test"], builds
     assert sorted(path.name for path in harness.iterdir()) == ["rcp_test-0.0.1-py3-none-any.whl"]
     # The staged tree the real build copies it into: the script names the harness directory beside dist/.
     assert 'stage/"$RC_NAME"/harness' in RC_BUILD.read_text(encoding="utf-8")
@@ -2067,11 +2069,15 @@ def test_rc_build_stages_the_real_checkout(tmp_path: Path) -> None:
 
 
 def _check_pins(
-    tmp_path: Path, *, core_pin: str = '  "cohere-rcp-core==0.0.1",\n', vllm_deps: str = '  "pydantic>=2.0",\n'
+    tmp_path: Path,
+    *,
+    core_pin: str = '  "cohere-rcp-core==0.0.1",\n',
+    configkit_pin: str = '  "cohere-configkit==0.0.1",\n',
+    vllm_deps: str = '  "pydantic>=2.0",\n',
 ) -> subprocess.CompletedProcess[str]:
     """Source rc_build.sh and run ``check_pins`` on a scratch checkout with the given manifests."""
     checkout = tmp_path / "checkout"
-    for member in ("rcp", "rcp-vllm", "rcp-core", "rcp-test"):
+    for member in ("rcp", "rcp-vllm", "rcp-core", "configkit", "rcp-test"):
         (checkout / "packages" / member).mkdir(parents=True, exist_ok=True)
 
     def _write(path: Path, text: str) -> None:
@@ -2081,13 +2087,13 @@ def _check_pins(
 
     _write(
         checkout / "packages" / "rcp" / "pyproject.toml",
-        '[project]\nname = "cohere-rcp"\nversion = "0.0.1"\ndependencies = [\n' + core_pin + "]\n",
+        '[project]\nname = "cohere-rcp"\nversion = "0.0.1"\ndependencies = [\n' + core_pin + configkit_pin + "]\n",
     )
     _write(
         checkout / "packages" / "rcp-vllm" / "pyproject.toml",
         '[project]\nname = "cohere-rcp-vllm"\nversion = "0.0.1"\ndependencies = [\n' + vllm_deps + "]\n",
     )
-    for member, name in (("rcp-core", "cohere-rcp-core"), ("rcp-test", "rcp-test")):
+    for member, name in (("rcp-core", "cohere-rcp-core"), ("configkit", "cohere-configkit"), ("rcp-test", "rcp-test")):
         _write(
             checkout / "packages" / member / "pyproject.toml",
             f'[project]\nname = "{name}"\nversion = "0.0.1"\n',
@@ -2105,7 +2111,7 @@ def _check_pins(
 
 
 def test_rc_build_release_check_refuses_a_stale_citation_or_manifest(tmp_path: Path) -> None:
-    """g-rcjobs-5(a): rc_build runs release.yml's four-manifest and CITATION.cff checks (one home,
+    """g-rcjobs-5(a): rc_build runs release.yml's five-manifest and CITATION.cff checks (one home,
     .github/scripts/check_release.py).  A commit whose citation or one workspace manifest carried another
     version used to pass every node gate and then fail the tag -- with a new commit, so the tested RC was
     not the published one."""
@@ -2136,13 +2142,16 @@ def test_rc_build_runs_the_release_checks_and_smokes_from_one_home() -> None:
 
 
 def test_rc_build_pin_check_accepts_the_real_manifests(tmp_path: Path) -> None:
-    """cohere-rcp pins cohere-rcp-core==VERSION; the lean cohere-rcp-vllm names NO sibling (decision 18:
-    no lockstep version pin between the two packages -- the manifest does not depend on cohere-rcp)."""
+    """cohere-rcp pins cohere-rcp-core==VERSION and cohere-configkit==VERSION; the lean cohere-rcp-vllm
+    names NO sibling (decision 18: no lockstep version pin between the two packages -- the manifest does
+    not depend on cohere-rcp)."""
     completed = _check_pins(tmp_path)
     assert completed.returncode == 0, completed.stderr
 
 
-@pytest.mark.parametrize("sibling", ["cohere-rcp==0.0.1", "cohere-rcp-core==0.0.1", "rcp-test==0.0.1"])
+@pytest.mark.parametrize(
+    "sibling", ["cohere-rcp==0.0.1", "cohere-rcp-core==0.0.1", "cohere-configkit==0.0.1", "rcp-test==0.0.1"]
+)
 def test_rc_build_pin_check_refuses_a_sibling_in_the_vllm_manifest(tmp_path: Path, sibling: str) -> None:
     """The pre-fix check asserted the opposite and aborted every build: ANY workspace sibling named in
     the vllm manifest is refused (not only cohere-rcp), naming decision 18."""
@@ -2163,6 +2172,14 @@ def test_rc_build_pin_check_refuses_a_missing_core_pin(tmp_path: Path) -> None:
     completed = _check_pins(tmp_path, core_pin="")
     assert completed.returncode != 0
     assert "cohere-rcp-core==0.0.1" in completed.stderr
+
+
+def test_rc_build_pin_check_refuses_a_missing_configkit_pin(tmp_path: Path) -> None:
+    """The configuration library is pinned exactly like the core: a cohere-rcp whose runtime dependency
+    omits it would resolve whatever the index has, not the tag's wheel."""
+    completed = _check_pins(tmp_path, configkit_pin="")
+    assert completed.returncode != 0
+    assert "cohere-configkit==0.0.1" in completed.stderr
 
 
 # --- judgecheck.sh: the release checklist's judge item (both thinking modes, the media probe) --------

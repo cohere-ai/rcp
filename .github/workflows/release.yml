@@ -1,6 +1,7 @@
-# Publish a release: on a tag v<version>, build the three distributions (cohere-rcp, cohere-rcp-core,
-# cohere-rcp-vllm), check each version against the tag, publish every package to its own PyPI project with
-# trusted publishing (OIDC, no secret), and attach the constraints file to the GitHub release.
+# Publish a release: on a tag v<version>, build the four release distributions (cohere-rcp, cohere-rcp-core,
+# cohere-configkit, cohere-rcp-vllm), check each version against the tag, publish every published package to its
+# own PyPI project with trusted publishing (OIDC, no secret), and attach the constraints file to the GitHub release.
+# cohere-configkit is built but not published: see the precondition in the build step below.
 #
 # Each package publishes through its own GitHub environment, because PyPI identifies a pending trusted publisher by
 # owner, repository, workflow file and environment only (not the project name). One-time setup on pypi.org, done:
@@ -14,6 +15,8 @@
 #   | cohere-rcp       | pypi               |
 #   | cohere-rcp-core  | pypi-core          |
 #   | cohere-rcp-vllm  | pypi-vllm          |
+#
+# cohere-configkit has no row: it is not published yet (a separate decision; see the build step).
 
 name: release
 
@@ -40,12 +43,18 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
-      - name: build cohere-rcp-core, cohere-rcp and cohere-rcp-vllm
+      - name: build cohere-rcp-core, cohere-configkit, cohere-rcp and cohere-rcp-vllm
         run: |
-          # The three published distributions, one --package per invocation (uv refuses a repeated flag),
-          # so the unpublished fourth workspace member, rcp-test, is never swept in. No plugin
-          # wheels: the folded models ship inside cohere-rcp-vllm (layout-move item 3).
+          # The release distributions, one --package per invocation (uv refuses a repeated flag), so the
+          # unpublished workspace member, rcp-test, is never swept in. No plugin wheels: the folded
+          # models ship inside cohere-rcp-vllm (layout-move item 3).
           uv build --package cohere-rcp-core --out-dir dist
+          # PRECONDITION, recorded here because it is not a gate: cohere-rcp pins cohere-configkit==<tag>
+          # and the cohere-configkit project is not on PyPI, so publish-cohere-rcp would upload an
+          # uninstallable wheel. The wheel is built (and installed from dist/ below) but has NO publish
+          # job; adding one -- and its pypi-configkit environment -- is a separate operator decision.
+          # Until it is taken, a tag publishes cohere-rcp-core, cohere-rcp and cohere-rcp-vllm only.
+          uv build --package cohere-configkit --out-dir dist
           uv build --package cohere-rcp --out-dir dist
           uv build --package cohere-rcp-vllm --out-dir dist
       - name: the versions are the tag's
@@ -54,6 +63,7 @@ jobs:
           expected=(
             "dist/cohere_rcp-${version}-py3-none-any.whl" "dist/cohere_rcp-${version}.tar.gz"
             "dist/cohere_rcp_core-${version}-py3-none-any.whl" "dist/cohere_rcp_core-${version}.tar.gz"
+            "dist/cohere_configkit-${version}-py3-none-any.whl" "dist/cohere_configkit-${version}.tar.gz"
             "dist/cohere_rcp_vllm-${version}-py3-none-any.whl" "dist/cohere_rcp_vllm-${version}.tar.gz"
           )
           ls -a dist
@@ -116,7 +126,7 @@ jobs:
             'from rcp_vllm.recipe import iter_recipes; print(" ".join(r.id for r in iter_recipes()))'); do
             "$RUNNER_TEMP/wheel-vllm/bin/rcp-vllm" serve "$id" --dry-run >/dev/null
           done
-      - name: the cohere-rcp wheel installs (its core pin from dist/) and works
+      - name: the cohere-rcp wheel installs (its sibling pins from dist/) and works
         run: |
           uv venv "$RUNNER_TEMP/wheel-rcp" --python 3.12
           uv pip install --python "$RUNNER_TEMP/wheel-rcp/bin/python" \

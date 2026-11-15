@@ -4,10 +4,11 @@
 ``release.yml``'s tag pipeline and ``rc_build.sh``'s candidate build both run this script, so a candidate
 can never pass the node gates with a check the tag would fail (g-rcjobs-5).  It checks:
 
-* every workspace manifest declares the version (the release builds three; a stale ``rcp-test``
-  leaves ``uv.lock`` and the stated rule disagreeing);
+* every workspace manifest declares the version (the release builds four of the five; a stale
+  ``rcp-test`` leaves ``uv.lock`` and the stated rule disagreeing);
 * ``CITATION.cff``'s ``version:`` is the version;
-* ``cohere-rcp`` pins ``cohere-rcp-core==<version>`` exactly, in every dependency scope;
+* ``cohere-rcp`` pins ``cohere-rcp-core==<version>`` and ``cohere-configkit==<version>`` exactly, in every
+  dependency scope;
 * ``cohere-rcp-vllm`` names no workspace sibling at all (decision 18; owner decision 15 settled the tag
   pipeline on the documented rule: the lean package pins no sibling, matching what ``rc_build.sh``
   already enforced);
@@ -37,12 +38,13 @@ __all__ = ["check_citation", "check_manifests", "check_pins", "check_wave_commit
 MANIFESTS = (
     "packages/rcp/pyproject.toml",
     "packages/rcp-core/pyproject.toml",
+    "packages/configkit/pyproject.toml",
     "packages/rcp-vllm/pyproject.toml",
     "packages/rcp-test/pyproject.toml",
 )
-"""The four workspace members; all four carry the release version (AGENTS.md: versions move together)."""
+"""The five workspace members; all five carry the release version (AGENTS.md: versions move together)."""
 
-WORKSPACE_SIBLINGS = {"cohere-rcp", "cohere-rcp-core", "rcp-test"}
+WORKSPACE_SIBLINGS = {"cohere-rcp", "cohere-rcp-core", "cohere-configkit", "rcp-test"}
 """Every distribution of this workspace except ``cohere-rcp-vllm`` itself."""
 
 # name, optional [extras], then the specifier: "cohere-rcp[calibrate]==0.0.1" -> ("cohere-rcp", "==0.0.1")
@@ -77,11 +79,11 @@ def check_manifests(root: Path, version: str) -> None:
     for relative in MANIFESTS:
         manifest = root / relative
         if not manifest.is_file():
-            raise SystemExit(f"{relative} is not in this tree: the workspace has four members")
+            raise SystemExit(f"{relative} is not in this tree: the workspace has five members")
         declared = tomllib.loads(manifest.read_text(encoding="utf-8"))["project"]["version"]
         if declared != version:
             raise SystemExit(f"{relative} declares {declared!r}, and the release version is {version!r}")
-    print(f"all four workspace manifests carry {version}")
+    print(f"all five workspace manifests carry {version}")
 
 
 def check_citation(root: Path, version: str) -> None:
@@ -95,31 +97,38 @@ def check_citation(root: Path, version: str) -> None:
     print(f"CITATION.cff version {version} matches")
 
 
+def _check_pin(root: Path, name: str, version: str) -> None:
+    """``packages/rcp/pyproject.toml`` pins *name* at ``version`` exactly, in the runtime scope and every other.
+
+    One rule for each sibling the product pins (the core and the configuration library): the runtime
+    dependency must carry the pin -- ``pip install cohere-rcp`` resolves it unpinned otherwise -- and no
+    other scope (an extra) may carry a different one.
+    """
+    manifest = root / "packages/rcp/pyproject.toml"
+    if not manifest.is_file():
+        raise SystemExit(f"{manifest} is not in this tree: it must pin {name}=={version}")
+    project = tomllib.loads(manifest.read_text(encoding="utf-8"))["project"]
+    runtime = list(project.get("dependencies", []))
+    declared = _declared(project)
+    expected = f"=={version}"
+    if not _pins_of(runtime, name):
+        raise SystemExit(f"packages/rcp/pyproject.toml does not declare {name}: it must pin {name}{expected} exactly")
+    pins = _pins_of(declared, name)
+    if any(pin != expected for pin in pins):
+        raise SystemExit(f"{name} must be pinned {expected} exactly in packages/rcp/pyproject.toml; found {pins}")
+    print(f"packages/rcp/pyproject.toml pins {name}{expected}")
+
+
 def check_pins(root: Path, version: str) -> None:
-    """The sibling pins: ``cohere-rcp`` pins its core exactly; ``cohere-rcp-vllm`` names no sibling at all.
+    """The sibling pins: ``cohere-rcp`` pins its core and its configkit exactly; ``cohere-rcp-vllm`` names
+    no sibling at all.
 
     One rule for both pipelines (owner decision 15, g-rcjobs-5(d)): the documented rule governs -- the
     lean package pins no sibling -- so the tag pipeline refuses the lockstep pin exactly as ``rc_build.sh``
     and decision 18 already did.
     """
-    core_manifest = root / "packages/rcp/pyproject.toml"
-    if not core_manifest.is_file():
-        raise SystemExit(f"{core_manifest} is not in this tree: it must pin cohere-rcp-core=={version}")
-    project = tomllib.loads(core_manifest.read_text(encoding="utf-8"))["project"]
-    runtime = list(project.get("dependencies", []))
-    declared = _declared(project)
-    expected = f"=={version}"
-    if not _pins_of(runtime, "cohere-rcp-core"):
-        raise SystemExit(
-            f"packages/rcp/pyproject.toml does not declare cohere-rcp-core: it must pin "
-            f"cohere-rcp-core{expected} exactly"
-        )
-    pins = _pins_of(declared, "cohere-rcp-core")
-    if any(pin != expected for pin in pins):
-        raise SystemExit(
-            f"cohere-rcp-core must be pinned {expected} exactly in packages/rcp/pyproject.toml; found {pins}"
-        )
-    print(f"packages/rcp/pyproject.toml pins cohere-rcp-core{expected}")
+    _check_pin(root, "cohere-rcp-core", version)
+    _check_pin(root, "cohere-configkit", version)
 
     vllm_manifest = root / "packages/rcp-vllm/pyproject.toml"
     if not vllm_manifest.is_file():

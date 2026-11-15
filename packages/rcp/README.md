@@ -22,9 +22,10 @@ gives the method and its validation.
 <p align="center"><em>The RCP-nDCG pipeline (Figure 2 of the paper).</em></p>
 
 This repository holds three published distributions. They are `cohere-rcp` (the pipeline and the command line),
-`cohere-rcp-core` (the metric) and `cohere-rcp-vllm` (the serving recipes). It also holds the unpublished `rcp-test` for contributors. The
-scripts that reproduce the paper's tables from the public data are in `experiments/`. Runnable examples are in
-`examples/`.
+`cohere-rcp-core` (the metric) and `cohere-rcp-vllm` (the serving recipes). It also holds `cohere-configkit`
+(the configuration library `cohere-rcp` is built on, which is not published yet) and the unpublished
+`rcp-test` for contributors. The scripts that reproduce the paper's tables from the public data are in
+`experiments/`. Runnable examples are in `examples/`.
 
 ## Install
 

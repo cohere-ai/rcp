@@ -9,8 +9,10 @@ tracked file never names a real one. Thus the operator passes the real prefix on
 
 ## Build a release candidate
 
-`rc_build.sh` builds the three published distributions with the same commands that the release workflow runs. It
-checks them: versions against the checkout, the pins, the constraints file against the lock, twine. It builds the **harness wheel** (`rcp-test`, the unpublished test distribution that the node's client environment imports). The wheel goes into its own `<stage>/harness/` directory. It builds the **wheelhouse**: every locked dependency beside
+`rc_build.sh` builds the four release distributions with the same commands that the release workflow runs. It
+checks them: versions against the checkout, the pins, the constraints file against the lock, twine. The four are
+the three published distributions and `cohere-configkit`, which the workflow builds and installs but does not
+publish yet. It builds the **harness wheel** (`rcp-test`, the unpublished test distribution that the node's client environment imports). The wheel goes into its own `<stage>/harness/` directory. It builds the **wheelhouse**: every locked dependency beside
 the release wheels, the CPU torch build included. It smoke-installs from the wheelhouse in a fresh venv. It
 stages everything and writes a hash manifest:
 
@@ -25,7 +27,7 @@ The build runs in a detached worktree of the given commit, so a dirty checkout i
 
 | Path | Contents |
 |---|---|
-| `dist/` | the six release files, as `release.yml` builds them |
+| `dist/` | the eight release files, as `release.yml` builds them |
 | `harness/` | the unpublished `rcp-test` wheel (the harness), built by name into its own directory; the node's client environment installs it from here |
 | `wheelhouse/` | the release wheels plus every locked dependency for the node's platform |
 | `requirements-constraints.txt` | the lock's export — the install's constraints file |

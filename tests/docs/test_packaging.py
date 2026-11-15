@@ -82,6 +82,7 @@ def test_every_runtime_dependency_is_imported_somewhere() -> None:
         "pillow": "PIL",
         "python-dotenv": "dotenv",
         "cohere-rcp-core": "rcp_core",
+        "cohere-configkit": "configkit",
         "pystemmer": "Stemmer",
     }
     lazily_loaded = {"gcsfs"}
@@ -193,6 +194,7 @@ CHECK_RELEASE = ROOT / ".github" / "scripts" / "check_release.py"
 _DISTRIBUTION_NAMES = {
     "rcp": "cohere-rcp",
     "rcp-core": "cohere-rcp-core",
+    "configkit": "cohere-configkit",
     "rcp-vllm": "cohere-rcp-vllm",
     "rcp-test": "rcp-test",
 }
@@ -203,14 +205,18 @@ def _release_tree(
     versions: dict[str, str],
     *,
     core: str = '"cohere-rcp-core==0.0.1"',
+    configkit: str = '"cohere-configkit==0.0.1"',
     vllm: str | None = ('[project]\nname = "cohere-rcp-vllm"\nversion = "0.0.1"\ndependencies = ["pydantic>=2.0"]\n'),
     core_in_extras: bool = False,
     extra_core: str | None = None,
 ) -> Path:
-    """A fixture release tree: the four manifests (each at its ``versions`` entry), the citation and the
-    given core/vllm declarations; ``vllm=None`` leaves the manifest the release builds absent."""
+    """A fixture release tree: the five manifests (each at its ``versions`` entry), the citation and the
+    given core/configkit/vllm declarations; ``vllm=None`` leaves the manifest the release builds absent."""
     tree = tmp_path / f"tree-{len(list(tmp_path.iterdir()))}"
-    declaration = f"[project.optional-dependencies]\ndev = [{core}]" if core_in_extras else f"dependencies = [{core}]"
+    if core_in_extras:
+        declaration = f"[project.optional-dependencies]\ndev = [{core}]"
+    else:
+        declaration = f"dependencies = [{core}, {configkit}]"
     if extra_core is not None:
         declaration += f"\n[project.optional-dependencies]\nprobe = [{extra_core}]"
     for package, version in versions.items():
@@ -347,7 +353,7 @@ def test_the_release_workflow_refuses_a_sibling_in_the_vllm_manifest(tmp_path) -
     ) -> subprocess.CompletedProcess[str]:
         tree = _release_tree(
             tmp_path,
-            dict.fromkeys(("rcp", "rcp-core", "rcp-vllm", "rcp-test"), version),
+            dict.fromkeys(("rcp", "rcp-core", "configkit", "rcp-vllm", "rcp-test"), version),
             core=core,
             vllm=manifest,
             core_in_extras=core_in_extras,
@@ -367,6 +373,7 @@ def test_the_release_workflow_refuses_a_sibling_in_the_vllm_manifest(tmp_path) -
         "cohere-rcp>=0.0.1",
         "cohere-rcp",
         "cohere-rcp-core==0.0.1",
+        "cohere-configkit==0.0.1",
         "rcp-test==0.0.1",
     )
     for sibling in siblings:
@@ -407,9 +414,9 @@ def test_the_release_workflow_refuses_a_sibling_in_the_vllm_manifest(tmp_path) -
 
 
 def test_the_release_workflow_checks_every_workspace_manifests_version(tmp_path) -> None:
-    """The tag's version is that of all four workspace manifests, not only the three the release builds.
+    """The tag's version is that of all five workspace manifests, not only the four the release builds.
 
-    The build job runs ``.github/scripts/check_release.py``; the test drives it against a tree of four
+    The build job runs ``.github/scripts/check_release.py``; the test drives it against a tree of five
     manifests in ``tmp_path``: the unpublished ``rcp-test`` included, because a stale version there
     leaves the lock and the stated release rule disagreeing.
     """
@@ -417,16 +424,16 @@ def test_the_release_workflow_checks_every_workspace_manifests_version(tmp_path)
     steps = workflow["jobs"]["build"]["steps"]
     step = next(step for step in steps if "manifests, the citation and the pins" in str(step.get("name", "")))
     assert "check_release.py" in str(step["run"])
-    packages = ("rcp", "rcp-core", "rcp-vllm", "rcp-test")
+    packages = ("rcp", "rcp-core", "configkit", "rcp-vllm", "rcp-test")
 
     def check(versions: dict[str, str]) -> subprocess.CompletedProcess[str]:
         return _run_release_check(_release_tree(tmp_path, versions))
 
     at_tag = dict.fromkeys(packages, "0.0.1")
-    assert check(at_tag).returncode == 0, "four manifests at the tag's version must pass"
+    assert check(at_tag).returncode == 0, "five manifests at the tag's version must pass"
     stale = dict(at_tag, **{"rcp-test": "0.0.2"})
     result = check(stale)
-    assert result.returncode == 1 and "rcp-test" in result.stderr, "a stale fourth manifest must fail"
+    assert result.returncode == 1 and "rcp-test" in result.stderr, "a stale fifth manifest must fail"
     missing = {package: "0.0.1" for package in packages[:-1]}
     assert check(missing).returncode == 1, "a missing workspace manifest must fail"
 
@@ -436,7 +443,7 @@ def test_the_release_check_refuses_a_tag_that_is_not_the_tested_rc_commit(tmp_pa
     takes the wave document(s) whose evidence flipped the statuses and compares their recorded
     ``rc.commit`` with the tag commit; a mismatch is refused naming both, and a wave document without the
     RC record (or of another version) is refused too."""
-    packages = ("rcp", "rcp-core", "rcp-vllm", "rcp-test")
+    packages = ("rcp", "rcp-core", "configkit", "rcp-vllm", "rcp-test")
     tree = _release_tree(tmp_path, dict.fromkeys(packages, "0.0.1"))
     wave = tmp_path / "wave.json"
     wave.write_text(
@@ -495,15 +502,15 @@ def test_the_release_workflow_check_fails_when_two_environments_are_swapped() ->
 def test_both_distributions_ship_the_license_and_the_notice() -> None:
     """NOTICE attributes the third-party code (Apache-2.0 section 4(d)); each distribution carries the same copy.
 
-    Four distributions (``rcp``, ``rcp-core``, ``rcp-vllm`` and the unpublished
+    Five distributions (``rcp``, ``rcp-core``, ``configkit``, ``rcp-vllm`` and the unpublished
     ``rcp-test``), one merged NOTICE byte-identical in all of them (docs-release Q4); the folded model
     plugins' attributions are part of it (their distributions are gone, layout-move item 3).
 
     ``rcp-vllm`` additionally ships the full texts of the licences its wheel bundles beyond Apache-2.0
     (ContextualAI's CC-BY-NC-SA-4.0 and Jina AI's CC-BY-NC-4.0 files, Perplexity AI's MIT file), so its
-    ``license-files`` carries ``LICENSES/*.txt``; the other three stay Apache-2.0 only.
+    ``license-files`` carries ``LICENSES/*.txt``; the other four stay Apache-2.0 only.
     """
-    folders = [ROOT / "packages" / name for name in ("rcp", "rcp-core", "rcp-vllm", "rcp-test")]
+    folders = [ROOT / "packages" / name for name in ("rcp", "rcp-core", "configkit", "rcp-vllm", "rcp-test")]
     for folder in folders:
         project = tomllib.loads((folder / "pyproject.toml").read_text(encoding="utf-8"))["project"]
         expected = ["LICENSE", "NOTICE"]
@@ -616,10 +623,15 @@ WORKSPACE_DISTRIBUTIONS = {
 
 
 def _the_offline_suite() -> list[Path]:
-    """Every test module one pytest process collects offline: the root tree and the two distribution trees
+    """Every test module one pytest process collects offline: the root tree and the three distribution trees
     it was split into. ``packages/rcp-test/tests`` and ``packages/rcp-vllm/tests`` run in their own
     processes (their own jobs), so their gates and marks are not this suite's."""
-    trees = (ROOT / "tests", ROOT / "packages" / "rcp" / "tests", ROOT / "packages" / "rcp-core" / "tests")
+    trees = (
+        ROOT / "tests",
+        ROOT / "packages" / "rcp" / "tests",
+        ROOT / "packages" / "rcp-core" / "tests",
+        ROOT / "packages" / "configkit" / "tests",
+    )
     return sorted(path for tree in trees for path in tree.rglob("*.py"))
 
 
@@ -778,12 +790,12 @@ def test_the_pydantic_floor_covers_the_config_keys_the_code_uses() -> None:
     """
     sources = "\n".join(
         path.read_text(encoding="utf-8")
-        for folder in ("packages/rcp/src", "packages/rcp-core/src")
+        for folder in ("packages/rcp/src", "packages/rcp-core/src", "packages/configkit/src")
         for path in (ROOT / folder).rglob("*.py")
     )
     used = [key for key in PYDANTIC_211_KEYS if key in sources]
     assert used, "the scan found no pydantic 2.11 config keys; update this test if the models changed"
-    for member in ("rcp-core", "rcp", "rcp-vllm", "rcp-test"):
+    for member in ("rcp-core", "rcp", "configkit", "rcp-vllm", "rcp-test"):
         manifest = tomllib.loads((ROOT / "packages" / member / "pyproject.toml").read_text(encoding="utf-8"))
         requirements = [Requirement(spec) for spec in manifest["project"]["dependencies"]]
         pydantic = [req for req in requirements if req.name.lower() == "pydantic"]
@@ -795,10 +807,10 @@ def test_the_pydantic_floor_covers_the_config_keys_the_code_uses() -> None:
 def test_every_member_build_directory_is_ignored() -> None:
     """An in-tree build (``pip wheel ./rcp``) leaves ``build/`` output behind.
 
-    ``/packages/*/build/`` covers all four members under the one member level, so a narrower pattern would
+    ``/packages/*/build/`` covers all five members under the one member level, so a narrower pattern would
     leave a build's output in ``git status`` and in ``git add -A``.
     """
-    for member in ("rcp", "rcp-core", "rcp-vllm", "rcp-test"):
+    for member in ("rcp", "rcp-core", "configkit", "rcp-vllm", "rcp-test"):
         result = subprocess.run(
             ["git", "check-ignore", "-q", f"packages/{member}/build/lib/x.py"], cwd=ROOT, capture_output=True
         )

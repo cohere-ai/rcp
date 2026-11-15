@@ -27,6 +27,7 @@ members = ["packages/*"]
 
 [tool.uv.sources]
 # An inter-member requirement resolves to the checkout, never to an index.
+cohere-configkit = { workspace = true }
 cohere-rcp = { workspace = true }
 cohere-rcp-core = { workspace = true }
 cohere-rcp-vllm = { workspace = true }
@@ -45,10 +46,10 @@ dev = [
 # fake transports -- and a third-party package registers its own.
 
 [tool.pytest.ini_options]
-# Collect the root test tree and the two distributions' suites it was split into (experiments/ and
+# Collect the root test tree and the three distributions' suites it was split into (experiments/ and
 # examples/ are exercised through tests/). The other two distributions' trees are never collected with
 # this one: `packages/rcp-test/tests` and `packages/rcp-vllm/tests` run in their own processes, as CI does.
-testpaths = ["tests", "packages/rcp/tests", "packages/rcp-core/tests"]
+testpaths = ["tests", "packages/rcp/tests", "packages/rcp-core/tests", "packages/configkit/tests"]
 # The repository root, so ``tests._session`` is importable from a package's test tree.
 pythonpath = ["."]
 # The judging client and the execution layers are async end to end; `auto` mode keeps
@@ -91,7 +92,7 @@ exclude = ["*.md"]
 select = ["E", "F", "I", "B", "UP"]
 
 [tool.basedpyright]
-include = ["packages/rcp/src", "packages/rcp-core/src", "packages/rcp-vllm/src", "packages/rcp-test/src"]
+include = ["packages/rcp/src", "packages/rcp-core/src", "packages/rcp-vllm/src", "packages/rcp-test/src", "packages/configkit/src"]
 # The recipes' reference subprocesses were outside the type-checked sources before the layout move (they
 # ran as subprocesses in their own environment, never imported); the move parked them inside a src tree,
 # and the exclusions keep the checked scope what it was. Same for the node scripts the move merged

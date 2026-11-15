@@ -2,7 +2,7 @@
 
 The package is never published: no release build, no publish job, no reference from the published
 metadata, no entry in the constraints file. The dev tooling reaches it through a dependency group and
-the workspace; the release workflow builds exactly the three published distributions.
+the workspace; the release workflow builds the release distributions by name and publishes three.
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ def test_the_release_workflow_never_builds_or_publishes_the_test_package() -> No
     assert "uv build --package rcp-test" not in text
     assert "rcp-test" not in text.split("needs:")[0].split("build")[0]
     # The guard that keeps a future workspace member from being swept into the release build: the
-    # three published packages are built by name, never with --all-packages.
+    # release packages are built by name, never with --all-packages.
     assert "--all-packages" not in text
     for package in ("cohere-rcp", "cohere-rcp-core", "cohere-rcp-vllm"):
         assert package in text, f"the release must keep building {package}"
@@ -55,14 +55,14 @@ def test_no_published_package_names_the_test_package() -> None:
 
 
 def test_the_workspace_root_reaches_it() -> None:
-    """The four-member workspace is the one channel from the root's tooling to the unpublished package:
+    """The five-member workspace is the one channel from the root's tooling to the unpublished package:
     a virtual workspace root syncs every member (the dev group the root carried before the layout move
     is gone), and the lock resolves rcp-test as a member."""
     workspace = tomllib.loads(_read(ROOT / "pyproject.toml"))
     members = workspace["tool"]["uv"]["workspace"]["members"]
-    # The one member pattern covers the four distributions the layout puts under packages/.
+    # The one member pattern covers the five distributions the layout puts under packages/.
     assert members == ["packages/*"]
-    for distribution in ("rcp", "rcp-core", "rcp-vllm", "rcp-test"):
+    for distribution in ("rcp", "rcp-core", "configkit", "rcp-vllm", "rcp-test"):
         assert (ROOT / "packages" / distribution / "pyproject.toml").is_file(), distribution
     assert workspace["tool"]["uv"]["sources"].get("rcp-test") == {"workspace": True}
 

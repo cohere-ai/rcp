@@ -15,9 +15,9 @@ subdirectory**:
 pip install "rcp-test @ git+https://github.com/cohere-ai/rcp.git@v0.0.1#subdirectory=packages/rcp-test"
 ```
 
-No published package names it, and the release workflow builds only the three published distributions by
-name, so it is never published with them. It depends on `cohere-rcp` and `cohere-rcp-vllm` at the release's
-version — never the other way round.
+No published package names it, and the release workflow builds the release distributions by name and
+publishes three of them, so it is never published with them. It depends on `cohere-rcp` and
+`cohere-rcp-vllm` at the release's version — never the other way round.
 
 ## What a case is
 

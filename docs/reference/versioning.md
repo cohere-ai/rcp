@@ -64,8 +64,9 @@ A `0.0.x` patch release:
   fit reproduce the paper. Anchor tests pin them. A change to their numbers is deliberate and tested, and it goes into
   the CHANGELOG ([REPRODUCIBILITY.md](https://github.com/cohere-ai/rcp/blob/main/REPRODUCIBILITY.md)).
 
-The four distributions carry the same version. `cohere-rcp` pins `cohere-rcp-core==<version>`. `cohere-rcp-vllm` carries the
-same version but pins no sibling, and `rcp-test` is never published.
+The five distributions carry the same version. `cohere-rcp` pins `cohere-rcp-core==<version>` and
+`cohere-configkit==<version>`. `cohere-rcp-vllm` carries the same version but pins no sibling, and `rcp-test`
+is never published.
 
 ### Deprecating a public name
 
@@ -141,7 +142,7 @@ repository is that output, committed, and `tests/contract` pins it byte for byte
 
 | Version | Home | Bumps when |
 |---|---|---|
-| the package version | all four `pyproject.toml` files, `rcp --version` | a public-surface change (minor) or an addition (patch), as the rules above say |
+| the package version | all five `pyproject.toml` files, `rcp --version` | a public-surface change (minor) or an addition (patch), as the rules above say |
 | a recipe's `schema_version` | `packages/rcp-vllm/src/rcp_vllm/recipes/*/family.yaml` | the recipe file format changes in an incompatible way |
 | the behaviour fingerprint rule | `rcp_test.fingerprint.FINGERPRINT_SCHEMA` (`rcp-fp/4`) | the input set or the canonicalisation of the fingerprint changes |
 | the corpus schemas | `rcp_test.corpus` (`rcp-ndcg.observation-corpus/1`, `RECORD_SCHEMA`, `NORMALISATION_VERSION`) | the corpus format, the record shape or the normalisation rule changes |

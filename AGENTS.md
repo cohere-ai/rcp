@@ -8,22 +8,24 @@ This file is for agents (and people) who change this repository. To use the pack
 ```bash
 uv sync --locked --extra dev                     # Python 3.12 or later
 uv run ruff format --check . && uv run ruff check .
-uv run basedpyright                              # the four src trees: zero errors, blocking in CI
+uv run basedpyright                              # the five src trees: zero errors, blocking in CI
 uv run pytest tests/ -n 4                        # the root tree: the invariants, the contract and docs suites
 uv run pytest packages/rcp/tests packages/rcp-core/tests -n 4   # the product's and the core's suites
+uv run pytest packages/configkit/tests -n 4      # the configuration library's suite
 uv run pytest packages/rcp-test/tests -n 4       # the harness's suite, in its own process
 uv run pytest packages/rcp-vllm/tests -q         # the serving package's suite, in its own process
 uv run pytest tests/contract                     # the public surface: CLI tree, exit codes, schemas, __all__
 uv run pytest tests/docs                         # Markdown links, navigation, and every documentation snippet
 ```
 
-The four suite invocations are one per tree: `packages/rcp-test/tests` and `packages/rcp-vllm/tests` are
+The five suite invocations are one per tree: `packages/rcp-test/tests` and `packages/rcp-vllm/tests` are
 never collected with the root tree (both trees are named `tests`), so no single `pytest tests/` runs the
-repository. CI runs the first two as one invocation (`pytest tests/ packages/rcp/tests packages/rcp-core/tests`).
+repository. CI runs the first three as one invocation (`pytest tests/ packages/rcp/tests packages/rcp-core/tests
+packages/configkit/tests`).
 
 On Linux the lock resolves torch with its CUDA wheels. CI, like a CPU-only machine, skips them and installs the CPU
 build instead, then runs every command with `uv run --no-sync` (see `.github/workflows/ci.yml`). CI needs no
-secrets. Run the narrowest test first, then the four suite invocations above before you finish. The tests that gate on `[data]`,
+secrets. Run the narrowest test first, then the five suite invocations above before you finish. The tests that gate on `[data]`,
 `[mteb]` or the `mcp` SDK (the pdf and hf readers, the transformers parity check, the MCP SDK round trip) skip in a
 bare `dev` environment; CI's `gated` job installs their extras and runs the whole tree with every gate open.
 
@@ -34,6 +36,9 @@ runs per that package's README.
 
 - `rcp-core` (`rcp_core`): the metric, the gains, the scoring protocols, the public records and
   the IRT estimators. numpy and pydantic only; torch is imported lazily inside `irt/` and nowhere else.
+- `packages/configkit/src/configkit` (`configkit`): the configuration and command-line library the
+  pipeline is built on (one value rule, one canonical form, one document model, one command tree).
+  pydantic only, and no import of the product: `rcp` depends on it, never the other way round.
 - `packages/rcp/src/rcp`: the pipeline and the CLI. Imports point inward only, in this order:
    `rcp_core → support → storage → data → inference → retrieval → judging → calibration → eval → runners → runs → results → schemas | mcp → cli`.
   Eager imports have no cycles; `schemas` and `mcp` import the CLI's command table lazily, to describe and serve it.
@@ -126,11 +131,13 @@ returns typed results and raises typed errors from `rcp.errors`.
 
 ## Releasing
 
-Push a tag `v<version>` whose version is that of all four `pyproject.toml` files (`packages/rcp/`,
-`packages/rcp-core/`, `packages/rcp-vllm/` and the unpublished `packages/rcp-test/`; the root manifest is the uv workspace
-only). `.github/workflows/release.yml` builds the three published distributions (one `--package` per member of
-the four-member workspace; `rcp-test` is never built), checks each version against the
-tag, that `rcp` pins `rcp-core==<version>`, and `requirements-constraints.txt` against the lock (the
+Push a tag `v<version>` whose version is that of all five `pyproject.toml` files (`packages/rcp/`,
+`packages/rcp-core/`, `packages/configkit/`, `packages/rcp-vllm/` and the unpublished `packages/rcp-test/`; the root
+manifest is the uv workspace only). `.github/workflows/release.yml` builds the four release distributions (one
+`--package` per member of the five-member workspace; `rcp-test` is never built) and publishes three of them:
+`cohere-configkit` is built, staged and installed from `dist/`, but it has no publish job until the project exists on
+PyPI. It checks each version against the tag, that `rcp` pins `rcp-core==<version>` and
+`configkit==<version>`, and `requirements-constraints.txt` against the lock (the
 pins, semantically -- `.github/scripts/check_constraints.py`), and runs
 `twine check` on every file. Each package publishes to PyPI with trusted publishing through its own GitHub environment
 (one publish job per package, below), because PyPI identifies a pending trusted publisher by owner, repository,

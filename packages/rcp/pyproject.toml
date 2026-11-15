@@ -26,6 +26,8 @@ dependencies = [
   # error when the fit is reached without it.
   # The core is released in lockstep with this package: the same version, pinned.
   "cohere-rcp-core==0.0.1",
+  # The configuration library is its own distribution, released in lockstep too.
+  "cohere-configkit==0.0.1",
   "numpy>=1.26",
   "pandas>=2.2",
   # Parquet artifacts (calibration queries/thetas tables).
@@ -179,17 +181,20 @@ where = ["src"]
 # (`rcp schema export` writes them byte for byte), so the wheel carries them as models.
 
 [tool.setuptools.package-data]
-# ``py.typed`` travels with the wheel's packages, so a type checker reads ``configkit``'s inline types (the
-# library ships no separate stubs); the wildcard covers ``configkit`` and every ``rcp`` subpackage.
+# ``py.typed`` travels with the wheel's packages, so a type checker reads every ``rcp`` subpackage's inline
+# types (the package ships no separate stubs); ``configkit`` is its own distribution and carries its own
+# ``py.typed`` in its own manifest.
 "*" = ["*.txt", "*.yaml", "py.typed"]
 "rcp.examples" = ["tiny/*.jsonl", "tiny/*.json", "runs/*.yaml"]
 
-# The repository is a uv workspace with four members: this manifest (the
+# The repository is a uv workspace with five members: this manifest (the
 # pipeline: storage, data, retrieval, judging, calibration, evaluation, runs and
 # the CLI), ``cohere-rcp-core`` (the metric, the gains, the protocols,
 # the schemas and the IRT estimators; numpy + pydantic, its [irt] extra: torch,
-# scipy; released in lockstep with this package) and the unpublished
-# ``rcp-test``, plus ``cohere-rcp-vllm`` (the serving half).
+# scipy; released in lockstep with this package), ``cohere-configkit`` (the
+# configuration and command-line library; pydantic only, released in lockstep
+# and pinned above) and the unpublished ``rcp-test``, plus ``cohere-rcp-vllm``
+# (the serving half).
 # ``cohere-rcp-vllm`` depends on pydantic and PyYAML alone, so the same wheel
 # installs into an engine image that carries its own vLLM and torch; its
 # workspace lock entry is inert there.  See packages/rcp-vllm/README.md.

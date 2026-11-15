@@ -151,7 +151,7 @@ not project. Each consumer ships a renderer test (§P6).
 
 ```
 packages/configkit/                     <- one distribution, its own manifest
-    pyproject.toml                      name = "configkit" (placeholder); dependencies: pydantic only
+    pyproject.toml                      name = "cohere-configkit" 0.0.1; dependencies: pydantic only
     src/configkit/                      <- import name `configkit`
         __init__.py  roles.py  document.py  overrides.py  identity.py  schemas.py
         faults.py  commands.py  ports.py  plugins.py  storage.py  vocab.py
