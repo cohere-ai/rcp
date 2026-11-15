@@ -1,4 +1,4 @@
-"""The host services the library names and never builds, and the log facade.
+"""The host services the library declares, and the one log facade it ships.
 
 One protocol per call, so a consumer injects its own implementation and the library holds no graph: a clock, a
 step or wall-clock budget, a log sink, an exit-code table, a result renderer, an atomic writer and a URI
