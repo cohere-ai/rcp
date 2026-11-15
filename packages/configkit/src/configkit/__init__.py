@@ -1,11 +1,10 @@
 """configkit: the shared configuration and command-line library.
 
 The library imports the standard library and ``pydantic`` and nothing else. It imports no module of the
-product that ships it (``rcp``, ``rcp_core``, ``rcp_vllm``), uses no relative import, reads no file and no
-environment variable at import time, and imports no YAML reader until a YAML document is read. Two proofs keep
-that true: ``packages/rcp/tests/configkit/test_isolation.py`` (an AST scan of every file at every scope, a
-run-time ``sys.modules`` probe and an extracted-copy probe) and the per-card import-closure command in the
-implementation plan.
+product (``rcp``, ``rcp_core``, ``rcp_vllm``), uses no relative import, reads no file and no environment
+variable at import time, and imports no YAML reader until a YAML document is read. The proof is
+``packages/configkit/tests/configkit/test_isolation.py`` (an AST scan of every file at every scope, a run-time
+``sys.modules`` probe and an extracted-copy probe); the design argument is ``docs/concepts/configkit.md``.
 
 ``__all__`` is the published surface: one block per module, in the module tree's order, added by each module's
 card and never reordered. ``rcp`` imports ``from configkit.<module>``; it re-exports none of these names.
