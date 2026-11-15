@@ -36,7 +36,7 @@ jobs:
         with:
           enable-cache: true
       - run: .github/scripts/cpu-env.sh dev
-      # src/ and the core package (packages/rcp/pyproject.toml [tool.basedpyright] include): zero errors, and it stays that way.
+      # The five packages/*/src trees (the root pyproject.toml [tool.basedpyright] include): zero errors, and it stays that way.
       - run: uv run --no-sync basedpyright
 
   test:
@@ -176,7 +176,8 @@ jobs:
       # entry points or package data are broken would pass the tag pipeline unchecked. Each published
       # distribution installs from its built wheel -- never from the checkout -- into its own fresh venv
       # and must import and work there. rcp's wheel pins rcp-core and configkit exactly, so the sibling
-      # wheels come from --find-links dist (the publish order ships core first), and the install runs
+      # wheels come from --find-links dist (the publish order ships core first, and configkit has no publish
+      # job yet, so its wheel comes from dist/ too), and the install runs
       # under the lock's constraints file so the resolution is the release's, not PyPI's latest.
       - name: build the release distributions
         run: |

@@ -170,7 +170,8 @@ jobs:
         with:
           packages-dir: dist/cohere-rcp-core
 
-  # cohere-rcp pins cohere-rcp-core==<version> exactly, so the core must exist on PyPI first.
+  # cohere-rcp pins cohere-rcp-core==<version> and cohere-configkit==<version> exactly, so the core must exist
+  # on PyPI first -- and the library's project does not exist yet, which the build job records (B1).
   publish-cohere-rcp:
     name: publish cohere-rcp to PyPI
     needs: publish-cohere-rcp-core

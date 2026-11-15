@@ -166,9 +166,10 @@ stage_tree() {
   fi
 }
 
-# check_pins SRC VERSION: the release checks, one home in .github/scripts/check_release.py -- the four
-# manifests, CITATION.cff, the core pin (every scope, read with tomllib, never by matching TOML text) and
-# decision 18/15's vllm rule: the lean package names NO workspace sibling (the tag pipeline refuses it too).
+# check_pins SRC VERSION: the release checks, one home in .github/scripts/check_release.py -- the five
+# manifests, CITATION.cff, the core and configkit pins (every scope, read with tomllib, never by matching
+# TOML text) and decision 18/15's vllm rule: the lean package names NO workspace sibling (the tag pipeline
+# refuses it too).
 check_pins() {
   local src="$1" version="$2"
   python3 "$src/.github/scripts/check_release.py" "$version" --root "$src"
