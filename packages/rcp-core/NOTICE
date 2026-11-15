@@ -14,8 +14,7 @@ GitHub, anonymously), its SHA-256 compared with the one quoted here and diffed
 against the shipped copy, and each licence read at that revision (the Hub's
 model card metadata; the LICENSE file of a GitHub repository). Each recipe's
 `sources`/`notes` record that file's exact deltas.
-Every distribution of this project (rcp, rcp-core, rcp-vllm and the unpublished
-rcp-test) carries this same file.
+Every distribution of this project carries this same file.
 
 Hugging Face transformers
   https://github.com/huggingface/transformers
