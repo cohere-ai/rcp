@@ -484,6 +484,27 @@ def test_the_move_table_names_the_root_package(source: str, destination: str) ->
     ), "a new exemption is a transform's table, never a file that could be rewritten"
 
 
+def test_the_library_rule_table_keeps_the_repository_names_as_data() -> None:
+    """``configkit``'s own audit rules name the repository names they refuse as data, never as paths.
+
+    A rewrite would collapse ``rcp-ndcg`` into a second ``rcp`` in the tuple and blind the rule. The
+    file is the same before and after the library's carve-out (``packages/rcp/tests/configkit/``
+    becomes ``packages/configkit/tests/configkit/``), so both spellings are exempt: keying the
+    exemption to one path re-reds the check at whichever tip moves the file.
+    """
+    text = '    "repository_names": ("rcp", "rcp-ndcg", "rcp-core", "emb-train", "emb-eval"),\n'
+    module = tool()
+    for name in (
+        "packages/rcp/tests/configkit/test_audit.py",
+        "packages/configkit/tests/configkit/test_audit.py",
+    ):
+        assert module._apply_rewrites(text, Path(name)) == (text, [])
+    # The control: the same text in a file that is not the library's rule table is a live spelling.
+    rewritten, hits = module._apply_rewrites(text, Path("packages/rcp/tests/test_rules.py"))
+    assert '"rcp-ndcg"' not in rewritten
+    assert hits == ["main-name x1"]
+
+
 def test_the_checkout_is_in_the_target_layout() -> None:
     """``--check`` must pass on the real checkout: it is the tool's own claim that the move landed.
 

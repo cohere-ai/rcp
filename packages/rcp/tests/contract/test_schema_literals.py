@@ -21,7 +21,7 @@ from rcp_core.schemas import accepted_schema_ids as core_accepted_schema_ids
 from rcp.schemas import SchemaTagged, accepted_schema_ids
 
 #: ``packages/rcp/src/rcp``: the product's source tree, the only tree this guard reads.
-PRODUCT = Path(__file__).resolve().parents[2] / "src/rcp"
+PRODUCT = Path(__file__).resolve().parents[2].joinpath("src", "rcp")
 
 #: The two prefixes a payload's ``schema`` field may carry: the current one and the pre-rename one.
 CURRENT_PREFIX = "rcp."

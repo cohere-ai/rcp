@@ -1219,9 +1219,9 @@ third-party package.
 
 The eleven underscore edges rcp 44 names are in rcp's consumer code (`calibration/_projection.py:173`,
 `extend.py:40`, `cli/data.py:462`, …), and a library test cannot see them. So each consumer ships the test:
-`rcp/tests/test_seam.py` and `emb-eval/tests/test_seam.py` walk their own import graph and refuse an underscore
-edge across a package boundary. One shared contract file (`contracts/seams.toml`) lists the allowed edges, and both
-tests read it. Round 2 put the whole proof inside the library, where it could not fail (review 1, M9).
+`packages/rcp/tests/test_seam.py` and `emb-eval/tests/test_seam.py` walk their own import graph and refuse an
+underscore edge across a package boundary. One shared contract file (`contracts/seams.toml`) lists the allowed
+edges, and both tests read it. Round 2 put the whole proof inside the library, where it could not fail (review 1, M9).
 
 ### P6 — C6: the payload a front end prints is the library's model, proved in each consumer
 

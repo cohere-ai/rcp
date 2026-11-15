@@ -458,6 +458,11 @@ def _apply_rewrites(text: str, name: Path) -> tuple[str, list[str]]:
             continue  # the trusted-publisher clause names the repository the rename came from, on purpose
         if rule == "main-name" and name.as_posix() == "packages/rcp/tests/judging/test_store.py":
             continue  # its parametrize list spells both identity tags as data: a pre-rename store carries the old one
+        if rule == "main-name" and name.as_posix() in (
+            "packages/rcp/tests/configkit/test_audit.py",
+            "packages/configkit/tests/configkit/test_audit.py",
+        ):
+            continue  # its rule table names the repository names the library refuses as data (both trees)
         if rule.startswith("test-") and name.as_posix() == "tests/docs/test_changelog.py":
             continue  # it pins the shipped 0.0.1 entry's harness homes as names, never live paths
         if rule == "main-name" and name.as_posix() == "tests/docs/test_changelog.py":
