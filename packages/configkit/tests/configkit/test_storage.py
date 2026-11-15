@@ -220,25 +220,6 @@ def test_runs_root_refuses_a_segment_that_escapes_the_root(tmp_path: Path) -> No
         layout.step_dir("run-1", "a/b")
 
 
-def test_the_library_layout_and_the_product_layout_are_two_names(tmp_path: Path) -> None:
-    """H7: ``configkit.storage`` and ``rcp.runs.layout`` both defined ``RunLayout``, for two meanings.
-
-    A module that imported both got one class silently: the product's ``RunLayout`` is *one run's* directory,
-    the library's is the directory every run lives under. The library's class is ``RunsRoot``, so both bind in
-    one namespace and each keeps its own meaning.
-    """
-    from configkit.storage import RunsRoot
-
-    from rcp.runs.layout import RunLayout
-
-    assert RunsRoot is not RunLayout
-    assert (RunsRoot.__name__, RunLayout.__name__) == ("RunsRoot", "RunLayout")
-    assert (RunsRoot.__module__, RunLayout.__module__) == ("configkit.storage", "rcp.runs.layout")
-    # The meanings the two names keep apart: the library roots the runs, the product roots one run.
-    assert RunsRoot(tmp_path).run_dir("run-1") == tmp_path / "run-1"
-    assert RunLayout.at(tmp_path).root == str(tmp_path)
-
-
 # ---------------------------------------------------------------------------------------------------------------
 # the URI seam: through Ports.uri, or the library's file:// handler (rcp-38, partial by design)
 # ---------------------------------------------------------------------------------------------------------------

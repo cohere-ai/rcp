@@ -33,6 +33,48 @@ PACKAGE = Path(__file__).resolve().parents[2] / "src/configkit"
 #: The top-level packages the library must never import: the product it ships in, its core and the serving half.
 FORBIDDEN_ROOTS = frozenset({"rcp", "rcp_core", "rcp_vllm"})
 
+#: ``packages/configkit/tests``: the suite that travels with the library, and must run where the product is absent.
+SUITE = Path(__file__).resolve().parents[1]
+
+
+def _consumer_imports(path: Path) -> list[str]:
+    """Every module-scope import of a consumer in *path*, as ``file:line: imports <root>`` (function scope is fine).
+
+    A module-scope import is collected before a test can skip: ``pytest packages/configkit/tests`` outside the
+    workspace failed at collection while the guarded, function-scope rows skipped as designed.
+    """
+    findings: list[str] = []
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    for node in tree.body:
+        roots: set[str] = set()
+        if isinstance(node, ast.Import):
+            roots = {alias.name.split(".")[0] for alias in node.names}
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            roots = {node.module.split(".")[0]}
+        findings.extend(f"{path.name}:{node.lineno}: imports {root}" for root in sorted(roots & FORBIDDEN_ROOTS))
+    return findings
+
+
+def test_no_test_module_imports_a_consumer_at_module_scope(tmp_path: Path) -> None:
+    """The suite runs in the target repository too: a consumer import is a guarded, function-scope one.
+
+    ``docs/concepts/configkit.md``: "No library test imports a consumer ... so the directory move still carries
+    a suite that runs in the target repository". The library's suite imports no consumer at module scope, and the
+    control proves the scan can fail: a module-scope import is one finding, a function-scope one none.
+    """
+    findings = [finding for path in sorted(SUITE.rglob("*.py")) for finding in _consumer_imports(path)]
+    assert findings == []
+
+    control = tmp_path / "test_control.py"
+    control.write_text(
+        "from rcp.calibration._projection import QUERY_ID_SEP\n"
+        "import rcp_core\n"
+        "def test_guarded():\n"
+        "    from rcp.support import urls\n",
+        encoding="utf-8",
+    )
+    assert _consumer_imports(control) == ["test_control.py:1: imports rcp", "test_control.py:2: imports rcp_core"]
+
 
 def _pydantic_closure() -> frozenset[str]:
     """The import names ``pydantic``'s metadata declares, plus ``pydantic`` itself: the C1 allow-list.

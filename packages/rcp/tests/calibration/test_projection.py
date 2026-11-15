@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 
 from rcp_core.schemas import Judgement, JudgementFamily, JudgementSet, Placement
 
-from rcp.calibration._projection import bradley_terry
+from rcp.calibration._projection import QUERY_ID_SEP, bradley_terry, namespace
 
 FAMILY = JudgementFamily(stage="tournament", judge_model="m", prompt_hash="0" * 64, parse_version=2)
 RECORDED_AT = datetime(2026, 1, 1, tzinfo=UTC)
@@ -126,3 +126,15 @@ def test_a_chunked_tournament_refit_writes_the_best_chunks_se() -> None:
     assert theta["a"] == chunk_thetas["d||q"][best], "the document's ability is its best chunk's"
     assert se["a"] == chunk_ses["d||q"][best], "the document's SE is its best chunk's"
     assert se["a"] != chunk_ses["d||q"][loser], "the losing chunk's SE is not the document's"
+
+
+def test_the_library_namespaces_a_query_id_the_same_way() -> None:
+    """The library's gains key and the product's projection key are one spelling (rcp-47).
+
+    ``configkit.vocab.GainsKey`` renders ``<dataset>||<query_id>`` and the library's suite cannot import the
+    product, so the parity between the two separators is pinned here, on the product's side.
+    """
+    from configkit.vocab import GainsKey
+
+    assert QUERY_ID_SEP == "||"
+    assert namespace("ds", "q1") == GainsKey.of("ds", "q1")

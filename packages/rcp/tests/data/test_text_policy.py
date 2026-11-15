@@ -49,6 +49,16 @@ class TestPolicyVocabulary:
         assert DEFAULT_MAX_TOKENS == 32768
         assert TextPolicy(on_overflow="truncate").max_tokens == 32768
 
+    def test_the_librarys_cut_is_the_default_cap(self) -> None:
+        """``configkit.vocab.cut_for`` is the same number for every shape (rcp-47).
+
+        The library's suite pins the cut as its own literal and cannot import the product, so the parity is
+        pinned here: one number, two declarations.
+        """
+        from configkit.vocab import cut_for
+
+        assert cut_for("query") == cut_for("document") == cut_for("pair") == DEFAULT_MAX_TOKENS
+
     def test_unknown_mode_is_refused(self) -> None:
         with pytest.raises(ValidationError, match="chunky"):
             TextPolicy(on_overflow="chunky")  # type: ignore[arg-type]
