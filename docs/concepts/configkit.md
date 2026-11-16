@@ -253,6 +253,10 @@ walk and emb-eval's unit key); path resolution (`path_fields`, replacing `_PATH_
 `emb_train_cli/config.py:36-40` and its miss at `schema.py:137`); redaction (`redact`, replacing rcp's seven
 `redact_*_payload` helpers); the local-input listing (`local_inputs`, replacing `local_inputs:700`).
 
+The two data walks cut on the instance, not the class. `redact` and `local_inputs` visit instances, not types.
+A chain of three instances of one class is three rows and three redacted secrets. A repeated instance is the
+cycle, and it is cut. `path_fields` walks types and cuts on the class, as `leaf_paths` does.
+
 ### `document.py` — one loader, and the validation-error mapper
 
 ```python
@@ -312,8 +316,12 @@ expected value, the known keys of the mapping and the redacted source. `support/
 Redaction calls `roles.redact`, so a `SECRET` field never reaches the message.
 
 **`leaf_paths`** (emb-eval M22). One derived enumeration of a model's dotted leaves, replacing the five hand-typed
-leaf sets at `config/resolve.py:97,121,157,178`, `config/suite.py:346`, `config/discover.py:218` and
-`config/cli.py:337`. A new contract field becomes expressible with no edit.
+leaf sets it was written for. emb-eval no longer keeps them: it derives its own set from the contract's
+declaration (`LEAF_PATHS = frozenset(RunSpec.leaf_paths())`). That derivation is the reason a new contract field
+needs no edit on either side. The walk cuts a cycle once per path. A type already on the path from the root
+contributes its own field path as a leaf. The walk does not enter it again. A type reached twice by *different*
+paths is entered twice. The root class is on the path from the start. So `Node.children: list[Node]`
+enumerates as `children`, and a self-referential contract terminates instead of raising.
 
 **`resolve_reference`** (rcp 22). One resolver from a name, a path, a recipe id or a shorthand, reporting the
 attempts it made. `cli/judge.py:59` and `inference/recipes.py:424` are the four callers today.

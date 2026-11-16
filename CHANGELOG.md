@@ -120,6 +120,17 @@ The root that state writes under is the consumer's `Brand.name`: `configkit` whe
 its own program name when it does, so the library writes under no other program's root. A consumer's handler on
 `rcp` receives the library's lines because the library's loggers sit under the consumer's brand, not beside it.
 
+The four walks over a model graph terminate on a self-referential model, and they share one rule. A type or
+instance already on the path from the root contributes its own field path as a leaf and is not entered again; one
+reached twice by *different* paths is entered twice; the root class is on the path from the start.
+`configkit.document.leaf_paths` raised `RecursionError` on `emb-eval`'s `RunSpec` (`model.sweep: list[Model]`),
+`configkit.roles.path_fields` raised on the loader's own path (`resolve` -> `_path_rows` -> `path_fields`), and
+`redact` and `local_inputs` raised on an instance built with `model_construct` that names itself. The key is per
+walk, because the walks visit different things: the model class for the two type walks, and `id(value)` for the
+two data walks, so a chain of three instances of one class keeps three rows and three redacted secrets. The
+private `_walk_models` in `configkit.roles` is the one implementation, `leaf_paths`'s docstring states the rule,
+and `configkit.__all__` is still 122.
+
 ### Dependencies
 
 The lock carries the windows the shipped engine release (`vllm` `v0.33.0`, the tag the serving image is built
