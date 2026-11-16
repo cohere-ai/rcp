@@ -13,6 +13,7 @@ requirement (rcp 23): it refuses a CONTENT field two layers set differently and 
 
 from __future__ import annotations
 
+import json
 import sys
 from dataclasses import FrozenInstanceError
 from pathlib import Path
@@ -439,6 +440,12 @@ def test_pipeline_refuses_an_override_with_no_base(tmp_path: Path) -> None:
     with pytest.raises(Fault) as caught:
         pipeline(path, _Run, overrides=parse(["judge.concurrency=8"]))
     assert caught.value.details["refusal"] == "no_base"
+
+
+def test_pipeline_takes_the_format_keyword(tmp_path: Path) -> None:
+    """D2: ``pipeline`` re-reads, so the parser the caller names reaches the file it reads."""
+    path = _write(tmp_path / "doc.yaml", json.dumps({"name": "x", "source": "data"}, indent="\t"))
+    assert pipeline(path, _Run, format="json").model == _Run(name="x", source=str((tmp_path / "data").resolve()))
 
 
 # --- the published error table -------------------------------------------------------------------------------

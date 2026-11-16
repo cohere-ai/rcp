@@ -140,6 +140,12 @@ or mapping and lists its rows under the indexed field path, and a location list 
 row instead of raising `RecursionError`. `configkit.document.config_error` redacts the input's strings when a
 `TypeAdapter` names no model container, so a refusal cannot carry a secret in `details.errors`.
 
+`configkit.document.read` takes `format: Literal["yaml", "json"] | None = None`, and `load` and
+`configkit.overrides.pipeline` pass it on: `None` keeps the suffix dispatch (JSON for a `.json` file, YAML
+otherwise), and a value forces that parser for every file in the `extends` chain. A consumer whose documents are
+named for what they configure rather than for what they hold no longer keeps its own reader to say so. Additive:
+no new name, `configkit.__all__` is still 122, and `tests/contract/snapshots/` does not move.
+
 ### Dependencies
 
 The lock carries the windows the shipped engine release (`vllm` `v0.33.0`, the tag the serving image is built

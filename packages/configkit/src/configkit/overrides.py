@@ -24,7 +24,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType, UnionType
-from typing import Any, Final, Union, get_args, get_origin
+from typing import Any, Final, Literal, Union, get_args, get_origin
 
 from pydantic import BaseModel
 
@@ -495,6 +495,7 @@ def pipeline[ModelT: BaseModel](
     base: Path | None = None,
     overrides: Sequence[Override] = (),
     schema_id: str | None = None,
+    format: Literal["yaml", "json"] | None = None,
     path_fields: Sequence[Sequence[str]] = (),
 ) -> Applied:
     """Run the contract's five stages in its order: ``read -> resolve -> apply -> validate -> identity``.
@@ -514,6 +515,8 @@ def pipeline[ModelT: BaseModel](
             not empty.
         overrides: The records to apply, in precedence order.
         schema_id: The id the document's ``schema`` key must equal, or ``None`` for no check.
+        format: The parser to use for *path* and every file it extends, or ``None`` to dispatch on the suffix
+            (see :func:`configkit.document.read`).
         path_fields: Extra dotted rows :func:`configkit.document.resolve` resolves, over the declared ``PATH``
             leaves.
 
@@ -527,7 +530,7 @@ def pipeline[ModelT: BaseModel](
     """
     if overrides and base is None:
         raise _refusal("no_base")
-    document = read(path, schema_id=schema_id)
+    document = read(path, schema_id=schema_id, format=format)
     draft = resolve(document, model, rows=path_fields)
     if overrides and base is not None:
         draft = apply(draft, overrides, base=base)

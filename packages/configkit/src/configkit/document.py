@@ -12,8 +12,9 @@ keeps them:
 5. the resolution happens before anything hashes the payload, so a moved local file changes the identity.
 
 Two of the five changed, and the module states them: it reads YAML as well as JSON (YAML is imported lazily, so a
-JSON document never imports it and the library's import path stays ``pydantic``-only), and it honours a top-level
-``extends``. :func:`deep_merge` is that rule's only implementation: the base mapping is merged *under* the child,
+JSON document never imports it and the library's import path stays ``pydantic``-only), it honours a top-level
+``extends``, and a caller may name the parser (:func:`read`'s ``format``) for a document whose suffix does not.
+:func:`deep_merge` is that rule's only implementation: the base mapping is merged *under* the child,
 key by key and recursively, and a file that reaches itself is refused naming the chain.
 
 The stages are separate functions because a run's pipeline needs them separated (``read -> resolve -> apply ->
@@ -33,7 +34,7 @@ import json
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Any, Final, Literal
 
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
@@ -247,13 +248,18 @@ def _json_document(text: str, path: Path) -> Any:
         raise _refuse(f"config {path} is not JSON: {exc}", path=str(path)) from exc
 
 
-def _mapping(path: Path, yaml_hint: str) -> dict[str, Any]:
-    """The mapping *path* holds: UTF-8 text, parsed as JSON for a ``.json`` file and as YAML otherwise."""
+def _mapping(path: Path, yaml_hint: str, *, format: Literal["yaml", "json"] | None = None) -> dict[str, Any]:
+    """The mapping *path* holds: UTF-8 text, parsed by *format* when it names one and by the suffix otherwise.
+
+    The suffix rule is the default: JSON for a ``.json`` file, YAML for anything else. *format* is the caller's
+    word and overrides it, so a document whose name disagrees with its text is still read as the text it holds.
+    """
     try:
         text = path.read_text(encoding="utf-8")
     except UnicodeDecodeError as exc:
         raise _refuse(f"config {path} is not UTF-8 text: {exc}", path=str(path)) from exc
-    payload = _json_document(text, path) if path.suffix.lower() == ".json" else _yaml_document(text, path, yaml_hint)
+    parser = format if format is not None else ("json" if path.suffix.lower() == ".json" else "yaml")
+    payload = _json_document(text, path) if parser == "json" else _yaml_document(text, path, yaml_hint)
     if payload is None:
         return {}
     if not isinstance(payload, Mapping):
@@ -267,9 +273,13 @@ def _merged(
     *,
     extends: bool,
     yaml_hint: str,
+    format: Literal["yaml", "json"] | None = None,
     on_file: Callable[[dict[str, Any], Path], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """*path*'s mapping with its ``extends`` chain merged under it, and *chain* the files already read."""
+    """*path*'s mapping with its ``extends`` chain merged under it, and *chain* the files already read.
+
+    *format* is passed to every file the chain reads, so the caller's parser is the whole chain's.
+    """
     resolved = path.resolve()
     if resolved in chain:
         links = " -> ".join(str(link) for link in (*chain, resolved))
@@ -277,7 +287,7 @@ def _merged(
             f"config {path} extends itself through {links}; an extends chain must end",
             chain=[str(link) for link in (*chain, resolved)],
         )
-    payload = _mapping(path, yaml_hint)
+    payload = _mapping(path, yaml_hint, format=format)
     base_ref = payload.pop(_EXTENDS, None)
     if on_file is not None:
         payload = on_file(payload, path.parent)
@@ -292,7 +302,9 @@ def _merged(
         raise _refuse(f"config {path}: `extends` names one path, got {base_ref!r}", path=str(path))
     base_path = path.parent / base_ref
     try:
-        base = _merged(base_path, (*chain, resolved), extends=extends, yaml_hint=yaml_hint, on_file=on_file)
+        base = _merged(
+            base_path, (*chain, resolved), extends=extends, yaml_hint=yaml_hint, format=format, on_file=on_file
+        )
     except OSError as exc:
         raise OSErrorFault(
             f"config {path} extends {base_ref!r}, which cannot be read: {exc}",
@@ -306,6 +318,7 @@ def read(
     path: Path,
     *,
     schema_id: str | None = None,
+    format: Literal["yaml", "json"] | None = None,
     extends: bool = True,
     yaml_hint: str = _YAML_HINT,
     on_file: Callable[[dict[str, Any], Path], dict[str, Any]] | None = None,
@@ -315,9 +328,15 @@ def read(
     The id is a parameter because each consumer's document declares its own, and the model must not default it: a
     caller that names no id checks none, and the model's own ``Literal`` field then owns the check.
 
+    ``format`` overrides the suffix for every file in the ``extends`` chain; ``None`` dispatches on the suffix
+    (JSON for a ``.json`` file, YAML otherwise). A document is sometimes named for what it configures rather than
+    for what it holds, and a caller that knows its own format says so once instead of renaming its files.
+
     Args:
         path: The document to read.
         schema_id: The id the document's ``schema`` key must equal, or ``None`` for no check.
+        format: The parser to use -- ``"yaml"`` or ``"json"`` -- for *path* and every file it extends, or
+            ``None`` to dispatch on each file's suffix.
         extends: Whether a top-level ``extends`` is honoured; ``False`` refuses a document that declares one.
         yaml_hint: The install line a missing YAML reader reports, verbatim.
         on_file: Called as ``on_file(payload, directory)`` on **each** file's own mapping -- the file's
@@ -338,7 +357,7 @@ def read(
             *on_file*'s own exception propagates unchanged: the caller's refusal is the caller's.
     """
     resolved = Path(path).resolve()
-    payload = _merged(resolved, (), extends=extends, yaml_hint=yaml_hint, on_file=on_file)
+    payload = _merged(resolved, (), extends=extends, yaml_hint=yaml_hint, format=format, on_file=on_file)
     schema_declared = _SCHEMA in payload
     declared = payload.pop(_SCHEMA, None)
     if schema_id is not None and declared != schema_id:
@@ -551,6 +570,7 @@ def load[ModelT: BaseModel](
     model: type[ModelT],
     *,
     schema_id: str | None = None,
+    format: Literal["yaml", "json"] | None = None,
     path_fields: Sequence[Sequence[str]] = (),
     do_validate: bool = True,
     extends: bool = True,
@@ -567,6 +587,8 @@ def load[ModelT: BaseModel](
         path: The document to read.
         model: The model class to build.
         schema_id: The id the document's ``schema`` key must equal, or ``None`` for no check.
+        format: The parser to use for *path* and every file it extends, or ``None`` to dispatch on the suffix
+            (see :func:`read`).
         path_fields: Extra dotted rows to resolve, over the ``Role.PATH`` leaves the model declares.
         do_validate: Whether to validate; ``False`` returns the draft :func:`resolve` built.
         extends: Whether a top-level ``extends`` is honoured.
@@ -580,7 +602,7 @@ def load[ModelT: BaseModel](
         Fault: reading refused the document (see :func:`read`), or validation failed (one
             :func:`config_error` fault naming the file and the field).
     """
-    document = read(path, schema_id=schema_id, extends=extends, yaml_hint=yaml_hint)
+    document = read(path, schema_id=schema_id, format=format, extends=extends, yaml_hint=yaml_hint)
     draft = resolve(document, model, rows=path_fields)
     if not do_validate:
         return draft

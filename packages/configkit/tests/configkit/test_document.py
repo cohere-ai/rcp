@@ -617,6 +617,58 @@ def test_a_missing_extends_base_is_a_fault_naming_the_child_and_the_base(tmp_pat
     assert caught.value.hint is not None and "missing.yaml" in caught.value.hint
 
 
+# --- the format keyword -------------------------------------------------------------------------------------
+
+
+def test_format_json_reads_a_json_document_whatever_its_suffix(tmp_path: Path) -> None:
+    """D2: the suffix dispatched, so a JSON document named ``.yaml`` was a YAML parse error; ``format`` names it."""
+    path = _write(tmp_path / "doc.yaml", json.dumps({"name": "x"}, indent="\t"))
+    with pytest.raises(Fault) as caught:
+        read(path)
+    assert "is not YAML" in caught.value.message
+    assert read(path, format="json").payload == {"name": "x"}
+
+
+def test_format_yaml_reads_a_yaml_document_whatever_its_suffix(tmp_path: Path) -> None:
+    """The other direction: a YAML document named ``.json`` was a JSON decode error; ``format="yaml"`` reads it."""
+    path = _write(tmp_path / "doc.json", "name: x\n")
+    with pytest.raises(Fault) as caught:
+        read(path)
+    assert "is not JSON" in caught.value.message
+    assert read(path, format="yaml").payload == {"name": "x"}
+
+
+def test_format_none_keeps_the_suffix_rule(tmp_path: Path) -> None:
+    """The default changes nothing: ``.json`` is JSON and every other suffix is YAML."""
+    yaml_doc = _write(tmp_path / "doc.yaml", "name: x\n")
+    json_doc = _write(tmp_path / "doc.json", json.dumps({"name": "x"}))
+    assert read(yaml_doc).payload == read(yaml_doc, format=None).payload == {"name": "x"}
+    assert read(json_doc).payload == read(json_doc, format=None).payload == {"name": "x"}
+    # The suffix rule is the one in force, so the named parser is not a no-op: this file is not JSON.
+    with pytest.raises(Fault):
+        read(yaml_doc, format="json")
+
+
+def test_format_applies_to_every_file_in_the_extends_chain(tmp_path: Path) -> None:
+    """The caller's parser is the whole chain's: a base named ``.yaml`` holding JSON is read as JSON too."""
+    _write(tmp_path / "base.yaml", json.dumps({"name": "base", "nested": {"a": 1}}, indent="\t"))
+    child = _write(tmp_path / "child.json", json.dumps({"extends": "base.yaml", "nested": {"b": 2}}))
+    with pytest.raises(Fault) as caught:
+        read(child)
+    assert "is not YAML" in caught.value.message
+    assert read(child, format="json").payload == {"name": "base", "nested": {"a": 1, "b": 2}}
+
+
+def test_load_takes_the_format_keyword(tmp_path: Path) -> None:
+    """``load`` is ``read + resolve + validate``, so the parser the caller names is the parser it reads with."""
+    text = json.dumps({"source": "data", "output": "runs", "name": "x"}, indent="\t")
+    path = _write(tmp_path / "doc.yaml", text)
+    loaded = load(path, _Doc, format="json")
+    assert loaded == _Doc(
+        source=str((tmp_path / "data").resolve()), output=str((tmp_path / "runs").resolve()), name="x"
+    )
+
+
 # --- the rest of the module's surface -----------------------------------------------------------------------
 
 
