@@ -121,15 +121,24 @@ its own program name when it does, so the library writes under no other program'
 `rcp` receives the library's lines because the library's loggers sit under the consumer's brand, not beside it.
 
 The four walks over a model graph terminate on a self-referential model, and they share one rule. A type or
-instance already on the path from the root contributes its own field path as a leaf and is not entered again; one
-reached twice by *different* paths is entered twice; the root class is on the path from the start.
-`configkit.document.leaf_paths` raised `RecursionError` on `emb-eval`'s `RunSpec` (`model.sweep: list[Model]`),
-`configkit.roles.path_fields` raised on the loader's own path (`resolve` -> `_path_rows` -> `path_fields`), and
-`redact` and `local_inputs` raised on an instance built with `model_construct` that names itself. The key is per
-walk, because the walks visit different things: the model class for the two type walks, and `id(value)` for the
-two data walks, so a chain of three instances of one class keeps three rows and three redacted secrets. The
-private `_walk_models` in `configkit.roles` is the one implementation, `leaf_paths`'s docstring states the rule,
-and `configkit.__all__` is still 122.
+instance already on the path from the root is not entered again; one reached twice by *different* paths is
+entered twice; the root class is on the path from the start. What the cut contributes is each walk's:
+`leaf_paths` adds the field as a leaf, `path_fields` adds no row (a `PATH` leaf under a repeated type is not
+enumerated), `redact` records the marker, and `local_inputs` lists no row because the instance's rows were
+emitted when it was entered. `configkit.document.leaf_paths` raised `RecursionError` on `emb-eval`'s `RunSpec`
+(`model.sweep: list[Model]`), `configkit.roles.path_fields` raised on the loader's own path (`resolve` ->
+`_path_rows` -> `path_fields`), and `redact` and `local_inputs` raised on an instance built with
+`model_construct` that names itself. The key is per walk, because the walks visit different things: the model
+class for the two type walks, and `id(value)` for the two data walks, so a chain of three instances of one class
+keeps three rows and three redacted secrets. The private `_walk_models` in `configkit.roles` is the one
+implementation, `leaf_paths`'s docstring states the rule, and `configkit.__all__` is still 122.
+
+`configkit.roles.redact` walks a list or mapping of dumps by the model the field's annotation holds, so a
+`SECRET` or `URI` inside `list[Inner]` or `dict[str, Inner]` is redacted instead of rendered in the clear, and a
+top-level list of dumps is walked elementwise as its docstring says. `local_inputs` walks a model held in a list
+or mapping and lists its rows under the indexed field path, and a location list that holds itself contributes no
+row instead of raising `RecursionError`. `configkit.document.config_error` redacts the input's strings when a
+`TypeAdapter` names no model container, so a refusal cannot carry a secret in `details.errors`.
 
 ### Dependencies
 

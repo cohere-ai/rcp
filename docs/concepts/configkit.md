@@ -255,7 +255,7 @@ walk and emb-eval's unit key); path resolution (`path_fields`, replacing `_PATH_
 
 The two data walks cut on the instance, not the class. `redact` and `local_inputs` visit instances, not types.
 A chain of three instances of one class is three rows and three redacted secrets. A repeated instance is the
-cycle, and it is cut. `path_fields` walks types and cuts on the class, as `leaf_paths` does.
+cycle, and it is cut. `path_fields` walks types and cuts on the class, as `leaf_paths` does; its cut adds no row.
 
 ### `document.py` — one loader, and the validation-error mapper
 
