@@ -208,6 +208,15 @@ class _RecordedList(BaseModel):
     IDENTITY_ROLES: ClassVar[dict[str, Any]] = {"name": Role.CONTENT, "inners": Role.CONTENT}
 
 
+class _RecordedDict(BaseModel):
+    """A model holding a mapping of a nested model, so redaction walks the mapping container."""
+
+    name: str
+    inners: dict[str, _RecordedInner]
+
+    IDENTITY_ROLES: ClassVar[dict[str, Any]] = {"name": Role.CONTENT, "inners": Role.CONTENT}
+
+
 class _Inputs(BaseModel):
     """A PATH input, a local URI, a remote URI and an environment variable."""
 
@@ -385,6 +394,13 @@ def test_redact_cuts_a_container_that_holds_itself() -> None:
     cyclic: list[Any] = []
     cyclic.append(cyclic)
     assert redact({"name": "n", "inners": cyclic}, model=_RecordedList)["inners"] == [REDACTED]
+
+
+def test_redact_cuts_a_mapping_that_holds_itself() -> None:
+    """A3: a mapping of dumps that holds itself is the cycle too, and the cut is the recorded marker."""
+    cyclic: dict[str, Any] = {}
+    cyclic["x"] = cyclic
+    assert redact({"name": "n", "inners": cyclic}, model=_RecordedDict) == {"name": "n", "inners": {"x": REDACTED}}
 
 
 def test_safe_url_is_public_and_strips_a_credentials_and_query() -> None:
