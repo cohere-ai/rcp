@@ -41,9 +41,10 @@ from configkit.faults import Fault, OSErrorFault, require
 from configkit.identity import canonical_bytes
 from configkit.roles import (
     _REDACTED,
-    _declares_roles,
+    _dump_key,
     _model_of,
     _nested_model,
+    _roles_of_or_none,
     _walk_models,
     path_fields,
     redact,
@@ -365,7 +366,7 @@ def _path_rows(model: type[BaseModel], extra: Sequence[Sequence[str]]) -> tuple[
     try:
         declared = path_fields(model)
     except Fault:
-        if _declares_roles(model):
+        if _roles_of_or_none(model) is not None:
             raise
         declared = ()
     rows: list[tuple[str, ...]] = []
@@ -773,7 +774,9 @@ def _redact_strings(value: Any) -> Any:
 def _redacted_input(value: Any, container: type[BaseModel] | None, loc: Sequence[str]) -> Any:
     """*value* as a problem's ``input``: every ``SECRET`` and ``URI`` field the model declares is redacted."""
     if container is None:
-        return _plain(value)
+        # No model is named (a ``TypeAdapter`` of a union, or a path that leaves the models), so no field can be
+        # named as a secret: redact every string rather than render the value verbatim.
+        return _redact_strings(value)
     try:
         roles_of(container)
     except Fault:
@@ -783,7 +786,7 @@ def _redacted_input(value: Any, container: type[BaseModel] | None, loc: Sequence
     if loc:
         leaf = loc[-1]
         for name, field in container.model_fields.items():
-            if (field.serialization_alias or field.alias or name) == leaf:
+            if _dump_key(name, field) == leaf:
                 return _plain(redact({leaf: value}, model=container)[leaf])
     if isinstance(value, Mapping):
         return _plain(redact(value, model=container))
@@ -869,16 +872,15 @@ def config_error(
     more = f" (and {len(problems) - 1} more)" if len(problems) > 1 else ""
     where = f"--set {first['field']}" if first["source"] == "--set" else f"{source}: {first['field']}"
     cli_hint: str | None = None
-    if hint is not None:
-        pass
-    elif first["source"] == "--set":
-        hint = "fix the override; values are YAML literals (k=10, k=null, 'k=[1, 2]')"
-        cli_hint = "fix the --set value; values are YAML literals (--set k=10, --set k=null, --set 'k=[1, 2]')"
-    elif first["field"] == "<config>":
-        hint, cli_hint = f"fix {source}", f"fix {source}"
-    else:
-        hint = f"fix {first['field']} in {source}, or override it (overrides=['{first['field']}=...'])"
-        cli_hint = f"fix {first['field']} in {source}, or override it with --set {first['field']}=..."
+    if hint is None:
+        if first["source"] == "--set":
+            hint = "fix the override; values are YAML literals (k=10, k=null, 'k=[1, 2]')"
+            cli_hint = "fix the --set value; values are YAML literals (--set k=10, --set k=null, --set 'k=[1, 2]')"
+        elif first["field"] == "<config>":
+            hint, cli_hint = f"fix {source}", f"fix {source}"
+        else:
+            hint = f"fix {first['field']} in {source}, or override it (overrides=['{first['field']}=...'])"
+            cli_hint = f"fix {first['field']} in {source}, or override it with --set {first['field']}=..."
     return Fault(
         f"{where}: {first['problem']}{expected_text}{guess}{more}",
         code="value_error",

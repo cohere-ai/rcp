@@ -40,7 +40,7 @@ from configkit.document import (
     validate_or_fault,
 )
 from configkit.faults import Fault, require
-from configkit.roles import Role, _declares_roles, _model_of, identity_of, roles_of
+from configkit.roles import Role, _model_of, _roles_of_or_none, identity_of
 
 __all__ = [
     "Override",
@@ -139,12 +139,8 @@ def _role_of(model: type[BaseModel], name: str) -> Role | None:
     because reading it as ``None`` writes a ``PATH`` override unresolved and silently -- a wrong value in the
     identity rather than a refusal.
     """
-    try:
-        return roles_of(model).get(name)
-    except Fault:
-        if _declares_roles(model):
-            raise
-        return None
+    roles = _roles_of_or_none(model)
+    return None if roles is None else roles.get(name)
 
 
 @dataclass(frozen=True)
