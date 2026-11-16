@@ -11,6 +11,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
+
 #: The repository root: ``packages/configkit/tests/configkit`` -> four parents up.
 REPOSITORY = Path(__file__).resolve().parents[4]
 
@@ -32,6 +34,8 @@ _TESTS = "## Tests the library carries"
 
 def _modules_the_tree_names() -> set[str]:
     """Every ``*.py`` name the page's module tree lists under ``src/configkit/``."""
+    if not PAGE.is_file():
+        pytest.skip("the concept page is not in this checkout")
     page = PAGE.read_text(encoding="utf-8")
     block = page.split(_PLACEMENT, 1)[1].split("```", 2)[1]
     named: set[str] = set()
@@ -55,6 +59,8 @@ def test_the_module_tree_names_exactly_the_modules_the_package_has() -> None:
 
 def _tests_the_table_names() -> set[str]:
     """Every ``test_*.py`` name the page's test table lists."""
+    if not PAGE.is_file():
+        pytest.skip("the concept page is not in this checkout")
     page = PAGE.read_text(encoding="utf-8")
     block = page.split(_TESTS, 1)[1].split("\n## ", 1)[0]
     return set(re.findall(r"`tests/(test_\w+\.py)`", block))

@@ -158,6 +158,15 @@ class _PathInner(BaseModel):
     IDENTITY_ROLES: ClassVar[dict[str, Any]] = {"checkpoint": Role.PATH, "note": Role.RUNTIME}
 
 
+class _PathDiamond(BaseModel):
+    """Two fields naming one PATH-bearing model: a type reached by two different paths."""
+
+    a: _PathInner
+    b: _PathInner
+
+    IDENTITY_ROLES: ClassVar[dict[str, Any]] = {"a": Role.CONTENT, "b": Role.CONTENT}
+
+
 class _Paths(BaseModel):
     """Two PATH leaves, one URI field and a nested PATH leaf."""
 
@@ -175,12 +184,17 @@ class _Paths(BaseModel):
 
 
 class _RecordedInner(BaseModel):
-    """A nested model with a URI field, so redaction is proved to recurse."""
+    """A nested model with a URI and a SECRET field, so redaction is proved to recurse."""
 
     endpoint: str
     checkpoint: str
+    token: str
 
-    IDENTITY_ROLES: ClassVar[dict[str, Any]] = {"endpoint": Role.URI, "checkpoint": Role.PATH}
+    IDENTITY_ROLES: ClassVar[dict[str, Any]] = {
+        "endpoint": Role.URI,
+        "checkpoint": Role.PATH,
+        "token": Role.SECRET,
+    }
 
 
 class _Recorded(BaseModel):
@@ -217,6 +231,15 @@ class _RecordedDict(BaseModel):
     IDENTITY_ROLES: ClassVar[dict[str, Any]] = {"name": Role.CONTENT, "inners": Role.CONTENT}
 
 
+class _RecordedUnion(BaseModel):
+    """A field whose union holds a model directly or in a list, so the walk must choose by the value's shape."""
+
+    name: str
+    inner: _RecordedInner | list[_RecordedInner]
+
+    IDENTITY_ROLES: ClassVar[dict[str, Any]] = {"name": Role.CONTENT, "inner": Role.CONTENT}
+
+
 class _Inputs(BaseModel):
     """A PATH input, a local URI, a remote URI and an environment variable."""
 
@@ -233,6 +256,15 @@ class _Inputs(BaseModel):
         "token_env": Role.ENV,
         "nested": Role.CONTENT,
     }
+
+
+class _Containers(BaseModel):
+    """A list and a mapping of a PATH-bearing model, so ``local_inputs`` is proved to walk containers."""
+
+    judges: list[_PathInner]
+    table: dict[str, _PathInner]
+
+    IDENTITY_ROLES: ClassVar[dict[str, Any]] = {"judges": Role.CONTENT, "table": Role.CONTENT}
 
 
 class _Link(BaseModel):
@@ -316,10 +348,7 @@ def test_a_model_with_no_declaration_raises() -> None:
 def test_identity_payload_is_content_only() -> None:
     """A3: the payload is CONTENT and none of the other six roles."""
     model = _EveryRole(content="c", runtime=1, path="/p", uri="u", secret="s", env="E", output="/o")
-    payload = identity_of(model)
-    assert payload == {"content": "c"}
-    for absent in ("runtime", "path", "uri", "secret", "env", "output"):
-        assert absent not in payload
+    assert identity_of(model) == {"content": "c"}
 
 
 def test_identity_nested_model_recurses() -> None:
@@ -348,6 +377,11 @@ def test_check_declarations_runs_at_each_level() -> None:
 def test_path_fields_are_the_path_leaves_nested_included() -> None:
     """The PATH enumeration the loader resolves, with a nested model's PATH leaf in it."""
     assert path_fields(_Paths) == (("source",), ("output_dir",), ("nested", "checkpoint"))
+
+
+def test_path_fields_enters_a_type_reached_twice_by_different_paths_twice() -> None:
+    """A3: the cut is ancestor-scoped, so a diamond keeps both rows."""
+    assert path_fields(_PathDiamond) == (("a", "checkpoint"), ("b", "checkpoint"))
 
 
 def test_path_fields_terminates_on_a_self_naming_model_and_the_cycle_adds_no_row() -> None:
@@ -401,6 +435,41 @@ def test_redact_cuts_a_mapping_that_holds_itself() -> None:
     cyclic: dict[str, Any] = {}
     cyclic["x"] = cyclic
     assert redact({"name": "n", "inners": cyclic}, model=_RecordedDict) == {"name": "n", "inners": {"x": REDACTED}}
+
+
+def test_redact_redacts_every_dump_of_a_container() -> None:
+    """A list or mapping of dumps is walked by the model it holds, not as another container level."""
+    dump = {"endpoint": "https://user:pw@host/v1?key=1", "checkpoint": "/checkpoints/x", "token": "s3cr3t"}
+    redacted = {"endpoint": "https://host/v1", "checkpoint": "/checkpoints/x", "token": REDACTED}
+    assert redact({"name": "n", "inners": [dump]}, model=_RecordedList) == {"name": "n", "inners": [redacted]}
+    assert redact({"name": "n", "inners": {"a": dump}}, model=_RecordedDict) == {
+        "name": "n",
+        "inners": {"a": redacted},
+    }
+
+
+def test_redact_walks_a_list_held_under_a_union_field() -> None:
+    """A union field holding a list of dumps is walked as a list, not handed to the model walk."""
+    dump = {"endpoint": "https://user:pw@host/v1", "checkpoint": "/checkpoints/x", "token": "s3cr3t"}
+    assert redact({"name": "n", "inner": [dump]}, model=_RecordedUnion) == {
+        "name": "n",
+        "inner": [{"endpoint": "https://host/v1", "checkpoint": "/checkpoints/x", "token": REDACTED}],
+    }
+
+
+def test_redact_walks_a_top_level_list_of_dumps() -> None:
+    """The documented ``a list of dumps`` payload is redacted elementwise, not returned unchanged."""
+    dump = {"endpoint": "https://user:pw@host/v1", "checkpoint": "/checkpoints/x", "token": "s3cr3t"}
+    assert redact([dump], model=_RecordedInner) == [
+        {"endpoint": "https://host/v1", "checkpoint": "/checkpoints/x", "token": REDACTED}
+    ]
+
+
+def test_redact_cuts_a_top_level_list_that_holds_itself() -> None:
+    """A top-level list that holds itself is the cycle, and the cut is the recorded marker."""
+    cyclic: list[Any] = []
+    cyclic.append(cyclic)
+    assert redact(cyclic, model=_RecordedInner) == [REDACTED]
 
 
 def test_safe_url_is_public_and_strips_a_credentials_and_query() -> None:
@@ -461,6 +530,26 @@ def test_local_inputs_cuts_an_instance_that_names_itself() -> None:
     cyclic = _Link.model_construct(path="/c", token="s", next=None)
     cyclic.next = cyclic
     assert local_inputs(cyclic) == ("path: /c",)
+
+
+def test_local_inputs_lists_a_model_held_in_a_container() -> None:
+    """A list or mapping of models is walked, each element under its indexed field path."""
+    model = _Containers(
+        judges=[_PathInner(checkpoint="/c0", note="n"), _PathInner(checkpoint="/c1", note="n")],
+        table={"a": _PathInner(checkpoint="/t", note="n")},
+    )
+    assert local_inputs(model) == (
+        "judges[0].checkpoint: /c0",
+        "judges[1].checkpoint: /c1",
+        "table[a].checkpoint: /t",
+    )
+
+
+def test_local_inputs_cuts_a_location_list_that_holds_itself() -> None:
+    """A location list that holds itself is the cycle, and the cut lists no row instead of recursing forever."""
+    cyclic: list[Any] = []
+    cyclic.append(cyclic)
+    assert local_inputs(_Inputs.model_construct(data=cyclic)) == ()
 
 
 def test_redact_cuts_a_payload_that_names_itself() -> None:

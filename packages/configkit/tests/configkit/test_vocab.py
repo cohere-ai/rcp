@@ -221,7 +221,7 @@ def test_dataset_ref_is_frozen_and_identity_shaped() -> None:
 def test_key_vocabulary_accepts_a_declared_mapping() -> None:
     """Every key declared, no key undeclared: the mapping passes."""
     vocabulary = KeyVocabulary(name="model.config", keys=("pooling", "normalize"))
-    vocabulary.check({"pooling": "mean", "normalize": True}, where="model.config")
+    assert vocabulary.check({"pooling": "mean", "normalize": True}, where="model.config") is None
 
 
 def test_key_vocabulary_refuses_an_unknown_key_naming_where() -> None:

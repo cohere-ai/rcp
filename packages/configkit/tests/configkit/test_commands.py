@@ -266,6 +266,7 @@ def test_a_usage_error_raises_and_is_caught() -> None:
     assert caught.value.details["prog"] == "p list"
     with pytest.raises(Fault):
         parser.parse_args(["--not-a-root-flag"])
+    with pytest.raises(Fault):
         parser.parse_args(["list", "--not-a-flag", "x", "--name", "x"])
     with pytest.raises(Fault):
         parser.parse_args(["list"])

@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import os
 import stat
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -274,4 +273,3 @@ def test_a_callable_write_receives_a_buffer_not_the_file(tmp_path: Path) -> None
     assert len(seen) == 1
     assert seen[0] != tmp_path / "x.bin"
     assert seen[0].parent == tmp_path
-    assert isinstance(publish, Callable)

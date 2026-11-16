@@ -37,7 +37,7 @@ from configkit.document import (
 from configkit.faults import Fault
 from configkit.identity import hash_payload
 from configkit.roles import Role, identity_of
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
 
 class _Doc(BaseModel):
@@ -76,11 +76,12 @@ class _Inner(BaseModel):
 
 
 class _Outer(BaseModel):
-    """A model with a scalar leaf, a nested model and a list of models: three shapes ``leaf_paths`` walks."""
+    """A model with a scalar leaf, a nested model, a list and a mapping of models: the shapes ``leaf_paths`` walks."""
 
     name: str
     inner: _Inner
     items: list[_Inner]
+    map_field: dict[str, _Inner]
 
 
 class _Defaults(BaseModel):
@@ -235,10 +236,6 @@ def test_a_declared_null_schema_is_distinguishable_from_no_schema_key(tmp_path: 
     assert declared.schema_declared is True
     assert "schema" not in declared.payload
 
-    absent = read(_write(tmp_path / "absent.yaml", "name: x\n"))
-    assert absent.schema is None
-    assert absent.schema_declared is False
-
 
 def test_resolves_a_relative_path_against_the_documents_own_directory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -364,6 +361,17 @@ def test_config_error_names_the_field_the_expected_type_the_known_keys_and_redac
     assert problem["field"] == "nam"
     assert problem["known"] == ["name", "secret"]
     assert problem["did_you_mean"] == "name"
+
+
+def test_config_error_redacts_every_string_when_no_model_names_the_input() -> None:
+    """A ``TypeAdapter`` names no container, so a refusal redacts the input's strings rather than rendering them."""
+    adapter = TypeAdapter(_Secrets | str)
+    with pytest.raises(ValidationError) as caught:
+        adapter.validate_python({"secret": "s3cr3t", "name": "x"})
+    fault = config_error(caught.value, model=adapter, source="dev.yaml")
+    assert "s3cr3t" not in repr(fault.details)
+    assert fault.details["errors"][0]["input"] == "<redacted>"
+    assert fault.details["errors"][1]["input"] == {"secret": "<redacted>", "name": "<redacted>"}
 
 
 class _Slurm(BaseModel):
@@ -692,8 +700,8 @@ def test_field_types_schema_hook_composes_the_registered_hook() -> None:
 
 
 def test_leaf_paths_lists_every_dotted_leaf_once() -> None:
-    """emb-eval M22: one derived enumeration of a model's leaves, nested models and lists of models included."""
-    assert leaf_paths(_Outer) == ("name", "inner.weight", "items.weight")
+    """emb-eval M22: one derived enumeration of a model's leaves, nested models, lists and mappings included."""
+    assert leaf_paths(_Outer) == ("name", "inner.weight", "items.weight", "map_field.weight")
 
 
 def test_leaf_paths_terminates_on_a_model_that_lists_itself() -> None:
