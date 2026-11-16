@@ -649,6 +649,30 @@ def test_format_none_keeps_the_suffix_rule(tmp_path: Path) -> None:
         read(yaml_doc, format="json")
 
 
+@pytest.mark.parametrize(
+    "named",
+    [pytest.param(None, id="None"), pytest.param("yaml", id="yaml"), pytest.param("json", id="json")],
+)
+def test_format_accepts_exactly_the_three_spellings(tmp_path: Path, named: Literal["yaml", "json"] | None) -> None:
+    """X1: the accepted set is exactly ``None``, ``"yaml"`` and ``"json"``, and each one reads the document."""
+    path = _write(tmp_path / "doc.yaml", json.dumps({"name": "x"}) if named == "json" else "name: x\n")
+    assert read(path, format=named).payload == {"name": "x"}
+
+
+@pytest.mark.parametrize("named", ["JSON", "json ", "toml", ""])
+def test_format_refuses_a_word_that_names_no_parser(tmp_path: Path, named: str) -> None:
+    """X1: every value but those three took the YAML branch silently; an unknown word is refused, not defaulted."""
+    path = _write(tmp_path / "doc.yaml", "name: x\n")
+    with pytest.raises(Fault) as caught:
+        read(path, format=named)  # type: ignore[arg-type]  # a value from an untyped source can be any word
+    assert caught.value.code == "value_error"
+    assert repr(named) in caught.value.message
+    assert "'yaml'" in caught.value.message and "'json'" in caught.value.message
+    assert caught.value.details["format"] == named
+    # The control: this document parses as YAML, so a silent fallback would have read it and said nothing.
+    assert read(path).payload == {"name": "x"}
+
+
 def test_format_applies_to_every_file_in_the_extends_chain(tmp_path: Path) -> None:
     """The caller's parser is the whole chain's: a base named ``.yaml`` holding JSON is read as JSON too."""
     _write(tmp_path / "base.yaml", json.dumps({"name": "base", "nested": {"a": 1}}, indent="\t"))

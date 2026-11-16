@@ -253,7 +253,17 @@ def _mapping(path: Path, yaml_hint: str, *, format: Literal["yaml", "json"] | No
 
     The suffix rule is the default: JSON for a ``.json`` file, YAML for anything else. *format* is the caller's
     word and overrides it, so a document whose name disagrees with its text is still read as the text it holds.
+    The word is one of exactly three: any other value is refused rather than read as YAML, because a value from an
+    untyped source would otherwise pick a parser the caller never named, and nothing here is defaulted silently.
     """
+    if format not in (None, "yaml", "json"):
+        raise _refuse(
+            f"config {path}: format {format!r} names no parser; it is 'yaml' or 'json', "
+            "or None to dispatch on the suffix",
+            path=str(path),
+            format=format,
+            accepted=["yaml", "json"],
+        )
     try:
         text = path.read_text(encoding="utf-8")
     except UnicodeDecodeError as exc:
@@ -330,7 +340,8 @@ def read(
 
     ``format`` overrides the suffix for every file in the ``extends`` chain; ``None`` dispatches on the suffix
     (JSON for a ``.json`` file, YAML otherwise). A document is sometimes named for what it configures rather than
-    for what it holds, and a caller that knows its own format says so once instead of renaming its files.
+    for what it holds, and a caller that knows its own format says so once instead of renaming its files. It is
+    one of exactly ``None``, ``"yaml"`` and ``"json"``: any other value is refused, never read as YAML.
 
     Args:
         path: The document to read.
@@ -350,10 +361,11 @@ def read(
         than left in the payload: ``resolve`` would otherwise refuse it as a key the model does not declare.
 
     Raises:
-        Fault: the file is not UTF-8 (``value_error``); a key appears twice (``value_error``); a base it extends
-            is missing or forms a cycle (``value_error``); the document is not a mapping; the ``schema`` id is
-            absent or different from *schema_id*; or the YAML reader is absent (``optional.missing``, with
-            *yaml_hint*). An absent file is an ``OSError``, which the fault table's generic row classifies.
+        Fault: ``format`` is neither ``None``, ``"yaml"`` nor ``"json"`` (``value_error``); the file is not
+            UTF-8 (``value_error``); a key appears twice (``value_error``); a base it extends is missing or forms
+            a cycle (``value_error``); the document is not a mapping; the ``schema`` id is absent or different
+            from *schema_id*; or the YAML reader is absent (``optional.missing``, with *yaml_hint*). An absent
+            file is an ``OSError``, which the fault table's generic row classifies.
             *on_file*'s own exception propagates unchanged: the caller's refusal is the caller's.
     """
     resolved = Path(path).resolve()

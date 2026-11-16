@@ -142,9 +142,11 @@ row instead of raising `RecursionError`. `configkit.document.config_error` redac
 
 `configkit.document.read` takes `format: Literal["yaml", "json"] | None = None`, and `load` and
 `configkit.overrides.pipeline` pass it on: `None` keeps the suffix dispatch (JSON for a `.json` file, YAML
-otherwise), and a value forces that parser for every file in the `extends` chain. A consumer whose documents are
-named for what they configure rather than for what they hold no longer keeps its own reader to say so. Additive:
-no new name, `configkit.__all__` is still 122, and `tests/contract/snapshots/` does not move.
+otherwise), and a value forces that parser for every file in the `extends` chain. The value is one of exactly
+`None`, `"yaml"` and `"json"`; any other word is refused naming it and the two spellings, instead of silently
+reading the document as YAML. A consumer whose documents are named for what they configure rather than for what
+they hold no longer keeps its own reader to say so. Additive: no new name, `configkit.__all__` is still 122, and
+`tests/contract/snapshots/` does not move.
 
 ### Dependencies
 
