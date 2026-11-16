@@ -39,7 +39,16 @@ from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from configkit.faults import Fault, OSErrorFault, require
 from configkit.identity import canonical_bytes
-from configkit.roles import _REDACTED, _declares_roles, _model_of, _nested_model, path_fields, redact, roles_of
+from configkit.roles import (
+    _REDACTED,
+    _declares_roles,
+    _model_of,
+    _nested_model,
+    _walk_models,
+    path_fields,
+    redact,
+    roles_of,
+)
 
 if TYPE_CHECKING:  # `overrides` sits above this module and imports it: the record names its type, not its code
     from configkit.overrides import Override
@@ -887,10 +896,16 @@ def _set_by(field: str, set_keys: Sequence[str]) -> bool:
 def leaf_paths(model: type[BaseModel]) -> tuple[str, ...]:
     """The dotted path of every leaf *model* declares, a nested model's leaves included.
 
-    One derived enumeration, so a new contract field is expressible with no edit: the five hand-typed leaf sets
-    ``emb-eval`` keeps are what this replaces. A field whose annotation names a model at any depth (``Inner``,
-    ``list[Inner]``, ``dict[str, Inner]``) is a branch and contributes its model's leaves under its own path;
-    every other field is a leaf.
+    One derived enumeration, so a new contract field is expressible with no edit: ``emb-eval`` derives its own
+    set from the contract's declaration (``LEAF_PATHS = frozenset(RunSpec.leaf_paths())``), where the hand-typed
+    leaf sets this replaces drifted from the models they described. A field whose annotation names a model at any
+    depth (``Inner``, ``list[Inner]``, ``dict[str, Inner]``) is a branch and contributes its model's leaves under
+    its own path; every other field is a leaf.
+
+    Walking a model graph, a type already on the path from the root contributes its own field path as a leaf and
+    is not entered again; a type reached twice by *different* paths is entered twice; the root class is on the
+    path from the start (``configkit.roles._walk_models`` is the one cycle rule). So ``Node.children: list[Node]``
+    contributes ``children``, and a self-referential contract terminates instead of raising ``RecursionError``.
 
     Args:
         model: The model class to enumerate.
@@ -898,13 +913,22 @@ def leaf_paths(model: type[BaseModel]) -> tuple[str, ...]:
     Returns:
         The dotted paths in declaration order, each field name from *model* down to the leaf.
     """
+    return _leaf_paths(model, seen=frozenset({model}))
+
+
+def _leaf_paths(model: type[BaseModel], *, seen: frozenset[type[BaseModel]]) -> tuple[str, ...]:
+    """Append *model*'s leaves, entering a nested model unless it is already on the path."""
     paths: list[str] = []
     for name, field in model.model_fields.items():
         nested = _nested_model(field.annotation)
-        if nested is not None:
-            paths.extend(f"{name}.{tail}" for tail in leaf_paths(nested))
-        else:
+        if nested is None:
             paths.append(name)
+            continue
+        entered = _walk_models(seen, nested)
+        if entered is None:
+            paths.append(name)
+        else:
+            paths.extend(f"{name}.{tail}" for tail in _leaf_paths(nested, seen=entered))
     return tuple(paths)
 
 

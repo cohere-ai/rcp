@@ -113,6 +113,41 @@ class _NoRoles(BaseModel):
     name: str
 
 
+class _SweepModel(BaseModel):
+    """The ``RunSpec`` shape one level down: a model whose own field lists it, so the type graph has a cycle."""
+
+    name: str
+    concurrency: int
+    sweep: list[_SweepModel]
+
+
+class _Sweep(BaseModel):
+    """A ``RunSpec``-shaped root: a scalar leaf and one field naming the self-referential model."""
+
+    name: str
+    model: _SweepModel
+
+
+class _Chain(BaseModel):
+    """A model a field of which names it directly: the cycle the enumeration must cut."""
+
+    tag: str
+    parent: _Chain | None = None
+
+
+class _Weight(BaseModel):
+    """The model two fields of :class:`_Diamond` name."""
+
+    weight: int
+
+
+class _Diamond(BaseModel):
+    """Two fields naming one model: one type reached by two different paths."""
+
+    a: _Weight
+    b: _Weight
+
+
 def _write(path: Path, text: str) -> Path:
     """Write *text* to *path* as UTF-8, creating the directory, and return the path."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -659,6 +694,21 @@ def test_field_types_schema_hook_composes_the_registered_hook() -> None:
 def test_leaf_paths_lists_every_dotted_leaf_once() -> None:
     """emb-eval M22: one derived enumeration of a model's leaves, nested models and lists of models included."""
     assert leaf_paths(_Outer) == ("name", "inner.weight", "items.weight")
+
+
+def test_leaf_paths_terminates_on_a_model_that_lists_itself() -> None:
+    """A3.1: the ``RunSpec`` shape (``model.sweep: list[Model]``) terminates and the cycle is one leaf."""
+    assert leaf_paths(_Sweep) == ("name", "model.name", "model.concurrency", "model.sweep")
+
+
+def test_leaf_paths_a_self_naming_field_is_its_own_path_and_is_not_entered_again() -> None:
+    """A3.2: a field naming its own model contributes its path as a leaf, not an expansion of that model."""
+    assert leaf_paths(_Chain) == ("tag", "parent")
+
+
+def test_leaf_paths_enters_a_type_reached_twice_by_different_paths_twice() -> None:
+    """A3: the cut is ancestor-scoped, so a diamond keeps both rows, as the ``inner``/``items`` pin does."""
+    assert leaf_paths(_Diamond) == ("a.weight", "b.weight")
 
 
 def test_resolve_reference_reports_the_attempts_it_made(tmp_path: Path) -> None:

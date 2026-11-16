@@ -166,6 +166,31 @@ def _content(value: Any) -> Any:
     return value
 
 
+def _walk_models[Key](seen: frozenset[Key], key: Key) -> frozenset[Key] | None:
+    """The path *seen* extended with *key*, or ``None`` when *key* is already on it: the one cycle rule.
+
+    The four walks over a model graph share this rule and not their recursions, because they walk different
+    things: :func:`path_fields` and ``document.leaf_paths`` walk the *type* graph and key on the model class,
+    while :func:`redact` and :func:`local_inputs` walk *data* and key on ``id(value)`` -- two instances of one
+    class are two rows, and a repeated instance is the cycle.
+
+    *seen* is the path from the root to the node being entered, never a set accumulated across the whole walk,
+    and it starts with the root's own key: a type or instance already on the path is the cut, while one reached
+    twice by *different* paths is walked twice. A cut type contributes its own field path as a leaf; a cut
+    instance contributes its row once, or the recorded marker.
+
+    Args:
+        seen: The keys on the path from the root to the node being entered, the root's own key included.
+        key: The key of the node being entered: a model class for a type walk, ``id(value)`` for a data walk.
+
+    Returns:
+        The path extended with *key*, to enter the node with; ``None`` when *key* is already on the path.
+    """
+    if key in seen:
+        return None
+    return seen | {key}
+
+
 def path_fields(model: type[BaseModel]) -> tuple[tuple[str, ...], ...]:
     """The dotted paths of every ``Role.PATH`` leaf in *model*, a nested model's leaves included.
 
@@ -173,12 +198,21 @@ def path_fields(model: type[BaseModel]) -> tuple[tuple[str, ...], ...]:
     this is the one enumeration of them (a hand-kept tuple misses a field, which is how ``emb-train``'s
     ``model.checkpoint`` never resolved). A path through a list or mapping of models applies to every element.
 
+    A model already on the path from the root is not entered again (:func:`_walk_models`): a self-referential
+    model terminates, and the cut contributes no row, because the row it would add is the one the first
+    occurrence emitted.
+
     Args:
         model: The model class whose PATH leaves are wanted.
 
     Returns:
         One tuple per PATH leaf, in declaration order, each the field names from *model* down to the leaf.
     """
+    return _path_fields(model, seen=frozenset({model}))
+
+
+def _path_fields(model: type[BaseModel], *, seen: frozenset[type[BaseModel]]) -> tuple[tuple[str, ...], ...]:
+    """Append *model*'s PATH leaves, entering a nested model unless it is already on the path."""
     roles = roles_of(model)
     paths: list[tuple[str, ...]] = []
     for name, field in model.model_fields.items():
@@ -186,8 +220,11 @@ def path_fields(model: type[BaseModel]) -> tuple[tuple[str, ...], ...]:
             paths.append((name,))
             continue
         nested = _nested_model(field.annotation)
-        if nested is not None:
-            paths.extend((name, *tail) for tail in path_fields(nested))
+        if nested is None:
+            continue
+        entered = _walk_models(seen, nested)
+        if entered is not None:
+            paths.extend((name, *tail) for tail in _path_fields(nested, seen=entered))
     return tuple(paths)
 
 
@@ -206,8 +243,14 @@ def redact(payload: Any, *, model: type[BaseModel]) -> Any:
         model: The model class *payload* was dumped from; it supplies the roles and the aliases.
 
     Returns:
-        A new payload; *payload* is not mutated.
+        A new payload; *payload* is not mutated. A sub-tree already on the path from the root is the cycle
+        (:func:`_walk_models`) and is cut to the recorded marker, so a payload that names itself terminates.
     """
+    return _redact(payload, model, seen=frozenset({id(payload)}))
+
+
+def _redact(payload: Any, model: type[BaseModel], *, seen: frozenset[int]) -> Any:
+    """*payload* redacted by *model*, entering a sub-tree unless its instance is already on the path."""
     if not isinstance(payload, Mapping):
         return payload
     roles = roles_of(model)
@@ -227,25 +270,32 @@ def redact(payload: Any, *, model: type[BaseModel]) -> Any:
         else:
             nested = _model_of(field.annotation)
             if nested is not None:
-                redacted[key] = redact(value, model=nested)
+                entered = _walk_models(seen, id(value))
+                redacted[key] = _REDACTED if entered is None else _redact(value, nested, seen=entered)
             elif _nested_model(field.annotation) is not None:
-                redacted[key] = _redact_nested(value, field.annotation)
+                redacted[key] = _redact_nested(value, field.annotation, seen=seen)
     for key, value in redacted.items():
         if key not in declared and value is not None:
             redacted[key] = _REDACTED
     return redacted
 
 
-def _redact_nested(value: Any, annotation: Any) -> Any:
+def _redact_nested(value: Any, annotation: Any, *, seen: frozenset[int]) -> Any:
     """*value* (a list or mapping of a nested model's dumps) with each dump redacted by the model it holds."""
     if isinstance(value, Mapping):
+        entered = _walk_models(seen, id(value))
+        if entered is None:
+            return _REDACTED
         inner = get_args(annotation)[-1] if get_args(annotation) else Any
-        return {key: _redact_nested(item, inner) for key, item in value.items()}
+        return {key: _redact_nested(item, inner, seen=entered) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
+        entered = _walk_models(seen, id(value))
+        if entered is None:
+            return _REDACTED
         inner = get_args(annotation)[0] if get_args(annotation) else Any
-        return [_redact_nested(item, inner) for item in value]
+        return [_redact_nested(item, inner, seen=entered) for item in value]
     nested = _model_of(annotation)
-    return redact(value, model=nested) if nested is not None else value
+    return _redact(value, model=nested, seen=seen) if nested is not None else value
 
 
 def local_inputs(model: BaseModel) -> tuple[str, ...]:
@@ -262,14 +312,15 @@ def local_inputs(model: BaseModel) -> tuple[str, ...]:
 
     Returns:
         The rows in declaration order, each ``"<field path>: <location>"``; a nested model's rows are prefixed
-        with its field path.
+        with its field path. A nested instance already on the path from the root is the cycle
+        (:func:`_walk_models`) and is not entered again, so a config that names itself terminates.
     """
     rows: list[str] = []
-    _collect_inputs(model, prefix="", rows=rows)
+    _collect_inputs(model, prefix="", rows=rows, seen=frozenset({id(model)}))
     return tuple(rows)
 
 
-def _collect_inputs(model: BaseModel, *, prefix: str, rows: list[str]) -> None:
+def _collect_inputs(model: BaseModel, *, prefix: str, rows: list[str], seen: frozenset[int]) -> None:
     """Append *model*'s local-input rows to *rows*, recursing into a nested model under *prefix*."""
     roles = roles_of(type(model))
     for name in type(model).model_fields:
@@ -285,7 +336,9 @@ def _collect_inputs(model: BaseModel, *, prefix: str, rows: list[str]) -> None:
         elif role is Role.ENV and isinstance(value, str):
             rows.append(f"{path}: ${value}")
         elif role is not Role.SECRET and isinstance(value, BaseModel):
-            _collect_inputs(value, prefix=f"{path}.", rows=rows)
+            entered = _walk_models(seen, id(value))
+            if entered is not None:
+                _collect_inputs(value, prefix=f"{path}.", rows=rows, seen=entered)
 
 
 def _append_locations(rows: list[str], path: str, value: Any, *, local: bool) -> None:

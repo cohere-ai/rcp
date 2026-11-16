@@ -199,6 +199,15 @@ class _Recorded(BaseModel):
     }
 
 
+class _RecordedList(BaseModel):
+    """A model holding a list of a nested model, so redaction walks a container of dumps."""
+
+    name: str
+    inners: list[_RecordedInner]
+
+    IDENTITY_ROLES: ClassVar[dict[str, Any]] = {"name": Role.CONTENT, "inners": Role.CONTENT}
+
+
 class _Inputs(BaseModel):
     """A PATH input, a local URI, a remote URI and an environment variable."""
 
@@ -215,6 +224,47 @@ class _Inputs(BaseModel):
         "token_env": Role.ENV,
         "nested": Role.CONTENT,
     }
+
+
+class _Link(BaseModel):
+    """A model a field of which names it: a chain of instances of one class, each with a PATH and a SECRET."""
+
+    path: str
+    token: str
+    next: _Link | None = None
+
+    IDENTITY_ROLES: ClassVar[dict[str, Any]] = {
+        "path": Role.PATH,
+        "token": Role.SECRET,
+        "next": Role.CONTENT,
+    }
+
+
+class _PathChain(BaseModel):
+    """A model a field of which names it directly, with a PATH leaf: the PATH enumeration must terminate."""
+
+    path: str
+    next: _PathChain | None = None
+
+    IDENTITY_ROLES: ClassVar[dict[str, Any]] = {"path": Role.PATH, "next": Role.CONTENT}
+
+
+class _PathSweepModel(BaseModel):
+    """The ``RunSpec`` shape one level down: a model whose own field lists it, with a PATH leaf."""
+
+    checkpoint: str
+    sweep: list[_PathSweepModel]
+
+    IDENTITY_ROLES: ClassVar[dict[str, Any]] = {"checkpoint": Role.PATH, "sweep": Role.CONTENT}
+
+
+class _PathSweep(BaseModel):
+    """A ``RunSpec``-shaped root: a PATH leaf and one field naming the self-referential model."""
+
+    output_dir: str
+    model: _PathSweepModel
+
+    IDENTITY_ROLES: ClassVar[dict[str, Any]] = {"output_dir": Role.PATH, "model": Role.CONTENT}
 
 
 def test_the_vocabulary_is_the_seven_members_in_order() -> None:
@@ -291,6 +341,16 @@ def test_path_fields_are_the_path_leaves_nested_included() -> None:
     assert path_fields(_Paths) == (("source",), ("output_dir",), ("nested", "checkpoint"))
 
 
+def test_path_fields_terminates_on_a_self_naming_model_and_the_cycle_adds_no_row() -> None:
+    """A3: the PATH enumeration terminates on a direct cycle, and the repeated type is not entered again."""
+    assert path_fields(_PathChain) == (("path",),)
+
+
+def test_path_fields_terminates_on_a_model_that_lists_itself() -> None:
+    """A3: the ``RunSpec`` shape, non-vacuously: a PATH leaf at each level, and ``sweep`` cut."""
+    assert path_fields(_PathSweep) == (("output_dir",), ("model", "checkpoint"))
+
+
 def test_redact_hides_secrets_and_url_credentials() -> None:
     """A SECRET becomes the recorded marker; a URI keeps its authority and path and loses the rest."""
     payload = {
@@ -320,6 +380,13 @@ def test_redact_redacts_a_key_the_model_does_not_declare() -> None:
     assert redact(payload, model=_Recorded)["name"] == "n"
 
 
+def test_redact_cuts_a_container_that_holds_itself() -> None:
+    """A3: a list of dumps that holds itself is the cycle, and the cut is the recorded marker."""
+    cyclic: list[Any] = []
+    cyclic.append(cyclic)
+    assert redact({"name": "n", "inners": cyclic}, model=_RecordedList)["inners"] == [REDACTED]
+
+
 def test_safe_url_is_public_and_strips_a_credentials_and_query() -> None:
     """H6: the rule was byte-identical to the product's ``safe_url`` but private, so the product kept a copy."""
     from configkit import roles
@@ -346,3 +413,42 @@ def test_local_inputs_lists_paths_local_uris_and_environment_names() -> None:
         "token_env: $HF_TOKEN",
         "nested.checkpoint: /checkpoints/x",
     )
+
+
+def _chain() -> _Link:
+    """Three validated instances of one class: ``first.next.next`` is the third."""
+    third = _Link(path="/p3", token="s3")
+    second = _Link(path="/p2", token="s2", next=third)
+    return _Link(path="/p1", token="s1", next=second)
+
+
+def test_local_inputs_keeps_every_row_of_a_chain_of_one_class() -> None:
+    """A3: the data walks key on the instance, so three instances of one class are three rows, not one.
+
+    Keyed on the class, the walk would stop at the first ``next`` and drop rows 2 and 3: a submitter would send
+    a job whose local inputs are not listed.
+    """
+    assert local_inputs(_chain()) == ("path: /p1", "next.path: /p2", "next.next.path: /p3")
+
+
+def test_redact_keeps_every_secret_of_a_chain_of_one_class() -> None:
+    """A3: keyed on the class, the walk would render the second and third ``token`` values in the clear."""
+    assert redact(_chain().model_dump(), model=_Link) == {
+        "path": "/p1",
+        "token": REDACTED,
+        "next": {"path": "/p2", "token": REDACTED, "next": {"path": "/p3", "token": REDACTED, "next": None}},
+    }
+
+
+def test_local_inputs_cuts_an_instance_that_names_itself() -> None:
+    """A3: a repeated instance is the cycle, and the cut lists its row once instead of forever."""
+    cyclic = _Link.model_construct(path="/c", token="s", next=None)
+    cyclic.next = cyclic
+    assert local_inputs(cyclic) == ("path: /c",)
+
+
+def test_redact_cuts_a_payload_that_names_itself() -> None:
+    """A3: a repeated payload is the cycle, and the cut is the recorded marker, never the raw sub-tree."""
+    payload: dict[str, Any] = {"path": "/c", "token": "s", "next": None}
+    payload["next"] = payload
+    assert redact(payload, model=_Link) == {"path": "/c", "token": REDACTED, "next": REDACTED}
