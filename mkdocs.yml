@@ -28,6 +28,7 @@ nav:
       - "Primitives: re-annotation, insertion and several judges": concepts/primitives.md
       - "Preprocessing and chunking": concepts/preprocessing.md
       - "Text budgets for served roles": concepts/text-budgets.md
+      - "The shared CLI and configuration library": concepts/configkit.md
       - "The inference layer: one transport for every role": concepts/inference.md
       - "Retrieval and reranking": concepts/retrieval.md
       - "Embedding endpoints": concepts/embeddings.md
