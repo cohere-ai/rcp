@@ -25,7 +25,7 @@ classifiers = [
 # `pip install cohere-rcp-core` stays viable on any platform.
 dependencies = [
   "numpy>=1.26",
-  "pydantic>=2.11",
+  "pydantic>=2.14.3",
 ]
 
 [project.optional-dependencies]
