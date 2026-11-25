@@ -24,7 +24,7 @@ classifiers = [
 # library without the product's stack (numpy, pandas, pyarrow, scipy, bm25s, click). 2.11 is the
 # floor because ``spec.OptionSchema`` validates by field name (``validate_by_name``).
 dependencies = [
-  "pydantic>=2.11",
+  "pydantic>=2.14.4",
 ]
 
 [project.optional-dependencies]
